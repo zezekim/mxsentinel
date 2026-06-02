@@ -85,6 +85,10 @@ Two signal producers are now implemented:
 - **`cmd/telemetryd`** — parses Postfix maillogs into `smtp.*` events (metadata only —
   recipients hashed, no bodies), publishes them, and spools to disk if the bus is down so
   mail-flow telemetry is never lost. Parser lives in `internal/telemetry`.
+- **`cmd/dmarcd`** — ingests DMARC aggregate reports (xml/.gz/.zip) from a drop directory:
+  archives the raw report to object storage, parses it (`internal/dmarc`), writes a
+  pointer row (Postgres) + per-source alignment records (ClickHouse), and quarantines
+  malformed reports instead of crashing.
 
 Config comes from `deploy/config/mxsentinel.example.yaml`, overridable by `MXS_*` env
 vars. The operator CLI is `cmd/mxctl` (`go run ./cmd/mxctl --help`). Code layout is

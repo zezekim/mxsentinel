@@ -73,6 +73,14 @@ replay: ## Replay the sample maillog into the bus (static demo tenant, no DB nee
 	go run ./cmd/telemetryd --replay test/fixtures/maillog.sample --skip-db \
 	  --tenant 00000000-0000-0000-0000-000000000001 --node-ip 198.51.100.5
 
+.PHONY: ingest-dmarc
+ingest-dmarc: ## Ingest the sample DMARC report once (needs a tenant owning example.com)
+	go run ./cmd/dmarcd --file test/fixtures/dmarc/valid.xml
+
+.PHONY: run-dmarcd
+run-dmarcd: ## Watch ./dmarc-drop for DMARC report files and ingest them
+	go run ./cmd/dmarcd --dir ./dmarc-drop
+
 .PHONY: bootstrap
 bootstrap: up ## Start stack, then migrate + ensure streams (waits for health)
 	@echo "waiting for services to become healthy..."

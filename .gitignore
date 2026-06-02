@@ -9,6 +9,10 @@
 *.out
 coverage.*
 
+# Runtime artifacts
+/dmarc-drop/
+telemetry-spool.ndjson
+
 # Env / secrets — never commit
 .env
 .env.*
