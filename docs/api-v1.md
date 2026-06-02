@@ -101,6 +101,22 @@ provider-aware classifier (Phase 2).
                 "provider": "google", "reason": "auth", "sample": "...", "count": 40 } ] }
 ```
 
+### `GET /v1/incidents?status=&domain=&limit=50`
+Persisted intelligence-layer incidents (Phase 2) — produced by `incidentd` from
+correlation/reputation/DNS events. `status` (`open`/`acknowledged`/`resolved`) and
+`domain` filters are optional.
+```json
+{ "incidents": [ {
+  "id": "uuid", "source_event_id": "uuid", "kind": "rejection_spike",
+  "severity": "critical", "domain": "example.com", "subject": "example.com",
+  "title": "DKIM selector missing after DNS change", "detail": { },
+  "status": "open", "confidence": 0.85,
+  "created_at": "...", "resolved_at": null } ] }
+```
+
+### `POST /v1/incidents/{id}/resolve`
+Marks an incident resolved → `{ "resolved": true }` (404 if not found for the tenant).
+
 ## Notes
 - Routing uses the Go 1.22 stdlib `net/http` mux (`GET /v1/domains/{id}/health`,
   `r.PathValue("id")`) — no third-party router.

@@ -85,6 +85,10 @@ run-dmarcd: ## Watch ./dmarc-drop for DMARC report files and ingest them
 run-correld: ## Run the correlation engine (rejection spikes -> DNS-change root cause)
 	go run ./cmd/correld
 
+.PHONY: run-incidentd
+run-incidentd: ## Run the incident recorder (reputation/DNS events -> incidents)
+	go run ./cmd/incidentd
+
 .PHONY: run-apid
 run-apid: ## Run the REST API server on :8080
 	go run ./cmd/apid

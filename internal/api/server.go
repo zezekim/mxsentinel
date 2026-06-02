@@ -42,6 +42,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/dmarc/reports", s.handleDMARCReports)
 	mux.HandleFunc("GET /v1/analytics/deliverability", s.handleDeliverability)
 	mux.HandleFunc("GET /v1/analytics/rejections", s.handleRejections)
+	mux.HandleFunc("GET /v1/incidents", s.handleListIncidents)
+	mux.HandleFunc("POST /v1/incidents/{id}/resolve", s.handleResolveIncident)
 
 	// recoverer (outermost) → logger → cors (handles preflight) → auth → routes
 	return chain(mux, s.recoverer, s.requestLogger, s.cors, s.requireAuth)
