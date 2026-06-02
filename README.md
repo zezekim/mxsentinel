@@ -73,9 +73,18 @@ make bus-ensure    # create/update JetStream streams
 make selftest      # publish + read back one of each event family
 make run-dnsd      # DNS Intelligence validator: snapshot monitored domains, emit events
 make replay        # replay a sample Postfix maillog into the bus as smtp.* events
+make run-apid      # REST API on :8080 (domain health, messages, DMARC)
+make apikey        # mint an API token for the demo tenant (printed once)
+make web-dev       # Next.js dashboard dev server (web/) -> http://localhost:3000
 make test          # unit tests (no services needed)
 # or: make bootstrap   # up + migrate + bus-ensure in one shot
 ```
+
+The REST API (`cmd/apid`, see [`docs/api-v1.md`](docs/api-v1.md)) makes the collected
+data queryable: domain health, DNS drift timeline, a message explorer over ClickHouse,
+and DMARC reports with alignment — all tenant-scoped via Bearer tokens. The **Next.js
+dashboard** in [`web/`](web/) renders those four screens; point it at the API with
+`NEXT_PUBLIC_API_TOKEN` (from `make apikey`).
 
 Two signal producers are now implemented:
 

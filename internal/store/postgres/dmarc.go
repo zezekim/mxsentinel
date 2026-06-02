@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -70,4 +71,61 @@ func (s *Store) InsertDMARCReport(ctx context.Context, p DMARCReportPointer) (st
 		return "", fmt.Errorf("insert dmarc report: %w", err)
 	}
 	return id, nil
+}
+
+// DMARCReportListItem is a row for the reports listing (joins the domain name).
+type DMARCReportListItem struct {
+	ID          string
+	OrgName     string
+	ReportID    string
+	Domain      string
+	DateBegin   time.Time
+	DateEnd     time.Time
+	RecordCount int
+}
+
+// ListDMARCReports lists a tenant's archived DMARC reports newest-first, optionally
+// filtered by domain name.
+func (s *Store) ListDMARCReports(ctx context.Context, tenantID, domain string, limit int) ([]DMARCReportListItem, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	args := []any{tenantID}
+	q := `SELECT r.id, r.org_name, r.report_id, COALESCE(d.name, ''),
+	             r.date_begin, r.date_end, r.record_count
+	      FROM dmarc_reports r
+	      LEFT JOIN domains d ON d.id = r.domain_id
+	      WHERE r.tenant_id = $1`
+	if domain != "" {
+		args = append(args, domain)
+		q += fmt.Sprintf(" AND d.name = $%d", len(args))
+	}
+	args = append(args, limit)
+	q += fmt.Sprintf(" ORDER BY r.date_begin DESC NULLS LAST LIMIT $%d", len(args))
+
+	rows, err := s.Pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list dmarc reports: %w", err)
+	}
+	defer rows.Close()
+
+	var out []DMARCReportListItem
+	for rows.Next() {
+		var it DMARCReportListItem
+		var begin, end *time.Time
+		if err := rows.Scan(&it.ID, &it.OrgName, &it.ReportID, &it.Domain, &begin, &end, &it.RecordCount); err != nil {
+			return nil, fmt.Errorf("scan dmarc report: %w", err)
+		}
+		if begin != nil {
+			it.DateBegin = *begin
+		}
+		if end != nil {
+			it.DateEnd = *end
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
 }

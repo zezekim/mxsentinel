@@ -1,0 +1,358 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
+  font-size: 14px;
+  color: #1a1a2e;
+  background: #f5f6fa;
+  line-height: 1.5;
+}
+
+/* ── Nav ─────────────────────────────────────────────────────────────────── */
+
+header {
+  background: #16213e;
+  color: #e0e0e0;
+  padding: 0 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  height: 52px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+header .brand {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.03em;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+nav {
+  display: flex;
+  gap: 0.25rem;
+}
+
+nav a {
+  color: #b0b8cc;
+  text-decoration: none;
+  padding: 0.35rem 0.75rem;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  transition: background 0.15s, color 0.15s;
+}
+
+nav a:hover,
+nav a.active {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+/* ── Page layout ─────────────────────────────────────────────────────────── */
+
+main {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+h1 {
+  font-size: 1.4rem;
+  font-weight: 600;
+  margin-bottom: 1.25rem;
+}
+
+h2 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 1.5rem 0 0.75rem;
+}
+
+/* ── Tables ──────────────────────────────────────────────────────────────── */
+
+.table-wrap {
+  overflow-x: auto;
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  background: #fff;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+thead tr {
+  background: #eef0f6;
+}
+
+th {
+  text-align: left;
+  padding: 0.6rem 0.9rem;
+  font-weight: 600;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #555;
+  border-bottom: 1px solid #dde0ea;
+  white-space: nowrap;
+}
+
+td {
+  padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid #eee;
+  vertical-align: middle;
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+tbody tr:hover {
+  background: #f8f9ff;
+}
+
+table a {
+  color: #2563eb;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+table a:hover {
+  text-decoration: underline;
+}
+
+/* ── Badges ──────────────────────────────────────────────────────────────── */
+
+.badge {
+  display: inline-block;
+  padding: 0.2em 0.55em;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.badge-ok,
+.badge-healthy {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.badge-warning {
+  background: #fef9c3;
+  color: #854d0e;
+}
+
+.badge-critical {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.badge-unknown {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.sev-info {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.sev-warning {
+  background: #fef9c3;
+  color: #854d0e;
+}
+
+.sev-critical {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+/* ── Stat cards ──────────────────────────────────────────────────────────── */
+
+.stat-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.stat-card {
+  background: #fff;
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  min-width: 140px;
+}
+
+.stat-card .label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #666;
+  margin-bottom: 0.3rem;
+}
+
+.stat-card .value {
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: #1a1a2e;
+}
+
+/* ── Filters ─────────────────────────────────────────────────────────────── */
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 1.25rem;
+  align-items: center;
+}
+
+.filters input,
+.filters select {
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.875rem;
+  background: #fff;
+  color: #1a1a2e;
+  min-width: 140px;
+}
+
+.filters input:focus,
+.filters select:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+.filters button {
+  padding: 0.4rem 0.9rem;
+  border: none;
+  border-radius: 4px;
+  background: #2563eb;
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.filters button:hover {
+  background: #1d4ed8;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+
+.btn {
+  display: inline-block;
+  padding: 0.45rem 1rem;
+  border-radius: 5px;
+  border: none;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.btn-primary {
+  background: #2563eb;
+  color: #fff;
+}
+
+.btn-primary:hover {
+  background: #1d4ed8;
+}
+
+.btn-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ── Domain detail ───────────────────────────────────────────────────────── */
+
+.detail-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.25rem;
+}
+
+.detail-header h1 {
+  margin-bottom: 0;
+}
+
+.category-badges {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.25rem;
+}
+
+.category-badges .cat {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: #555;
+}
+
+/* ── State messages ──────────────────────────────────────────────────────── */
+
+.state-msg {
+  padding: 2rem;
+  text-align: center;
+  color: #666;
+}
+
+.state-msg.error {
+  color: #991b1b;
+}
+
+/* ── Misc ─────────────────────────────────────────────────────────────────── */
+
+.back-link {
+  display: inline-block;
+  margin-bottom: 1rem;
+  color: #2563eb;
+  text-decoration: none;
+  font-size: 0.875rem;
+}
+
+.back-link:hover {
+  text-decoration: underline;
+}
+
+.changed-pill {
+  background: #dcfce7;
+  color: #166534;
+  border-radius: 20px;
+  padding: 0.2em 0.7em;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.no-results {
+  padding: 1.5rem;
+  text-align: center;
+  color: #888;
+  background: #fff;
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}

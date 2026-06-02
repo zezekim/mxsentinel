@@ -81,6 +81,18 @@ ingest-dmarc: ## Ingest the sample DMARC report once (needs a tenant owning exam
 run-dmarcd: ## Watch ./dmarc-drop for DMARC report files and ingest them
 	go run ./cmd/dmarcd --dir ./dmarc-drop
 
+.PHONY: run-apid
+run-apid: ## Run the REST API server on :8080
+	go run ./cmd/apid
+
+.PHONY: apikey
+apikey: ## Create an API token for the demo tenant (printed once)
+	go run ./cmd/mxctl apikey create --tenant demo
+
+.PHONY: web-dev
+web-dev: ## Run the Next.js dashboard dev server (needs NEXT_PUBLIC_API_TOKEN)
+	cd web && npm install && npm run dev
+
 .PHONY: bootstrap
 bootstrap: up ## Start stack, then migrate + ensure streams (waits for health)
 	@echo "waiting for services to become healthy..."

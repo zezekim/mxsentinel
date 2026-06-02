@@ -13,6 +13,7 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/spf13/cobra"
 
+	"github.com/zezekim/mxsentinel/internal/api"
 	"github.com/zezekim/mxsentinel/internal/config"
 	"github.com/zezekim/mxsentinel/internal/events"
 	"github.com/zezekim/mxsentinel/internal/obs"
@@ -51,8 +52,56 @@ func newRootCmd() *cobra.Command {
 		migrateCmd(loadCfg),
 		busCmd(loadCfg),
 		seedCmd(loadCfg),
+		apikeyCmd(loadCfg),
 	)
 	return root
+}
+
+func apikeyCmd(load func() (config.Config, error)) *cobra.Command {
+	c := &cobra.Command{Use: "apikey", Short: "Manage API credentials"}
+
+	var tenantSlug, name string
+	create := &cobra.Command{
+		Use:   "create",
+		Short: "Create an API token for a tenant (printed once)",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if tenantSlug == "" {
+				return fmt.Errorf("--tenant is required")
+			}
+			cfg, err := load()
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			pg, err := pgstore.New(ctx, cfg.Postgres)
+			if err != nil {
+				return err
+			}
+			defer pg.Close()
+
+			tenant, err := pg.GetTenantBySlug(ctx, tenantSlug)
+			if err != nil {
+				return err
+			}
+			token, prefix, hash, err := api.GenerateToken()
+			if err != nil {
+				return err
+			}
+			id, err := pg.CreateAPICredential(ctx, tenant.ID, name, prefix, hash, []string{"read"})
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "created api credential %s for tenant %s\n", id, tenantSlug)
+			fmt.Fprintf(out, "token (shown once, store it now):\n  %s\n", token)
+			return nil
+		},
+	}
+	create.Flags().StringVar(&tenantSlug, "tenant", "", "tenant slug (e.g. demo)")
+	create.Flags().StringVar(&name, "name", "dashboard", "credential name")
+
+	c.AddCommand(create)
+	return c
 }
 
 func versionCmd() *cobra.Command {
