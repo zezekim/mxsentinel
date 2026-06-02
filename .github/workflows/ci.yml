@@ -41,7 +41,11 @@ jobs:
           cache: true
       - uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          # Build golangci-lint with the project's Go (1.26) via go install, so its
+          # built-with-Go version isn't lower than our go.mod target (otherwise it
+          # refuses with exit 3). The prebuilt "latest" binary lags new Go releases.
+          version: v1.64.8
+          install-mode: goinstall
 
   web:
     name: dashboard build
