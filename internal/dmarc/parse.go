@@ -156,11 +156,7 @@ func Parse(r io.Reader) (*Report, error) {
 		}
 
 		for _, d := range xr.AuthResults.DKIM {
-			rec.DKIMAuth = append(rec.DKIMAuth, AuthResult{
-				Domain:   d.Domain,
-				Selector: d.Selector,
-				Result:   d.Result,
-			})
+			rec.DKIMAuth = append(rec.DKIMAuth, AuthResult(d))
 		}
 
 		for _, s := range xr.AuthResults.SPF {

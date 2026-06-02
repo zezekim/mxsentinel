@@ -322,7 +322,7 @@ func rfc3339Ptr(t *time.Time) *string {
 	return &s
 }
 
-func parseIntParam(r *http.Request, name string, def, max int) int {
+func parseIntParam(r *http.Request, name string, def, maxVal int) int {
 	v := r.URL.Query().Get(name)
 	if v == "" {
 		return def
@@ -331,8 +331,8 @@ func parseIntParam(r *http.Request, name string, def, max int) int {
 	if err != nil || n <= 0 {
 		return def
 	}
-	if n > max {
-		return max
+	if n > maxVal {
+		return maxVal
 	}
 	return n
 }
