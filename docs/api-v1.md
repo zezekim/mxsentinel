@@ -85,6 +85,22 @@ Archived DMARC reports + aggregate alignment.
                  "dkim_pass_rate": 0.972, "spf_pass_rate": 0.891 } }
 ```
 
+### `GET /v1/analytics/deliverability?since=&until=`
+Per-provider outcome counts (Phase 2). `since`/`until` are RFC 3339, optional.
+```json
+{ "providers": [ { "provider": "google", "delivered": 980, "deferred": 5,
+                   "bounced": 3, "rejected": 12, "total": 1000, "delivered_rate": 0.98 } ] }
+```
+
+### `GET /v1/analytics/rejections?since=&until=&limit=50`
+Rejected/bounced events grouped and classified into reasons by the correlation engine's
+provider-aware classifier (Phase 2).
+```json
+{ "reasons": [ { "reason": "auth", "count": 40 }, { "reason": "reputation", "count": 12 } ],
+  "groups": [ { "smtp_code": 550, "enhanced_status": "5.7.26", "bounce_class": "auth",
+                "provider": "google", "reason": "auth", "sample": "...", "count": 40 } ] }
+```
+
 ## Notes
 - Routing uses the Go 1.22 stdlib `net/http` mux (`GET /v1/domains/{id}/health`,
   `r.PathValue("id")`) — no third-party router.

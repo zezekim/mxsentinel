@@ -52,8 +52,8 @@ Collect → Normalize → Correlate → Analyze → Explain → Remediate
 
 | Phase | Theme | Scope |
 | --- | --- | --- |
-| **1 — Foundation** *(current)* | Get data flowing | Relay telemetry, DNS validator, DMARC ingestion, Postgres schema, dashboard MVP. |
-| **2 — Intelligence** | Make data mean something | Correlation engine, provider analytics, rejection analysis, reputation tracking. |
+| **1 — Foundation** *(complete)* | Get data flowing | Relay telemetry, DNS validator, DMARC ingestion, Postgres schema, dashboard MVP. |
+| **2 — Intelligence** *(current)* | Make data mean something | Correlation engine, provider analytics, rejection analysis, reputation tracking. |
 | **3 — AI Diagnostics** | Explain & recommend | Root-cause analysis, anomaly detection, remediation recommendations. |
 | **4 — Enterprise** | Scale & isolate | HA relay clusters, RBAC, public APIs, multi-region, tenant federation. |
 
@@ -79,6 +79,13 @@ make web-dev       # Next.js dashboard dev server (web/) -> http://localhost:300
 make test          # unit tests (no services needed)
 # or: make bootstrap   # up + migrate + bus-ensure in one shot
 ```
+
+**Phase 2 (Intelligence) has begun:** `cmd/correld` is the correlation engine — it watches
+SMTP telemetry for per-provider rejection spikes, classifies the dominant reason, and
+correlates each spike against recent DNS changes to produce a root-cause hypothesis
+(*"DKIM selector removed at 10:44 → Outlook auth rejections at 10:45"*), publishing a
+`reputation.rate_anomaly` event. The pure logic lives in `internal/correlate`; the API
+exposes `GET /v1/analytics/{deliverability,rejections}`.
 
 The REST API (`cmd/apid`, see [`docs/api-v1.md`](docs/api-v1.md)) makes the collected
 data queryable: domain health, DNS drift timeline, a message explorer over ClickHouse,

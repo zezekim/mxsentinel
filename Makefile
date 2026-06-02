@@ -81,6 +81,10 @@ ingest-dmarc: ## Ingest the sample DMARC report once (needs a tenant owning exam
 run-dmarcd: ## Watch ./dmarc-drop for DMARC report files and ingest them
 	go run ./cmd/dmarcd --dir ./dmarc-drop
 
+.PHONY: run-correld
+run-correld: ## Run the correlation engine (rejection spikes -> DNS-change root cause)
+	go run ./cmd/correld
+
 .PHONY: run-apid
 run-apid: ## Run the REST API server on :8080
 	go run ./cmd/apid

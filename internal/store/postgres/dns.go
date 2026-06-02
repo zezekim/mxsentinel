@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -91,6 +92,65 @@ func (s *Store) InsertSnapshot(ctx context.Context, domainID string, stateJSON [
 		return "", fmt.Errorf("commit snapshot: %w", err)
 	}
 	return snapID, nil
+}
+
+// DNSChangeRow is a snapshot (with its findings) used by the correlation engine.
+type DNSChangeRow struct {
+	SnapshotID string
+	CapturedAt time.Time
+	Findings   []contracts.DNSFinding
+}
+
+// RecentDNSChanges returns a tenant domain's snapshots captured since `since`, newest
+// first, each with its findings — input for correlating rejection spikes with DNS changes.
+func (s *Store) RecentDNSChanges(ctx context.Context, tenantID, domainName string, since time.Time) ([]DNSChangeRow, error) {
+	const q = `SELECT s.id, s.captured_at,
+	                  f.category::text, f.severity::text, f.code, f.message, f.detail
+	           FROM dns_snapshots s
+	           JOIN domains d ON d.id = s.domain_id
+	           LEFT JOIN dns_findings f ON f.snapshot_id = s.id
+	           WHERE d.tenant_id = $1 AND d.name = $2 AND s.captured_at >= $3
+	           ORDER BY s.captured_at DESC, s.id`
+	rows, err := s.Pool.Query(ctx, q, tenantID, domainName, since)
+	if err != nil {
+		return nil, fmt.Errorf("recent dns changes: %w", err)
+	}
+	defer rows.Close()
+
+	var out []DNSChangeRow
+	byID := map[string]int{} // snapshot id -> index in out
+	for rows.Next() {
+		var (
+			id                  string
+			captured            time.Time
+			cat, sev, code, msg *string
+			detail              []byte
+		)
+		if err := rows.Scan(&id, &captured, &cat, &sev, &code, &msg, &detail); err != nil {
+			return nil, fmt.Errorf("scan dns change: %w", err)
+		}
+		idx, ok := byID[id]
+		if !ok {
+			out = append(out, DNSChangeRow{SnapshotID: id, CapturedAt: captured})
+			idx = len(out) - 1
+			byID[id] = idx
+		}
+		if cat != nil { // LEFT JOIN: nil when the snapshot had no findings
+			f := contracts.DNSFinding{Category: *cat, Severity: deref(sev), Code: deref(code), Message: deref(msg)}
+			if len(detail) > 0 {
+				_ = json.Unmarshal(detail, &f.Detail)
+			}
+			out[idx].Findings = append(out[idx].Findings, f)
+		}
+	}
+	return out, rows.Err()
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // MarkDomainChecked stamps a domain's last_checked_at, called after every poll regardless
