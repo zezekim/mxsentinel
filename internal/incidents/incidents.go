@@ -29,7 +29,7 @@ func FromEnvelope(ev *contracts.Envelope) (pgstore.IncidentInput, bool) {
 		if err := ev.DecodePayload(&p); err != nil {
 			return base, false
 		}
-		return dnsIncident(ev, base, p), true
+		return dnsIncident(base, p), true
 
 	default:
 		return base, false
@@ -68,7 +68,7 @@ func reputationIncident(ev *contracts.Envelope, in pgstore.IncidentInput, p cont
 	return in
 }
 
-func dnsIncident(ev *contracts.Envelope, in pgstore.IncidentInput, p contracts.DNSPayload) pgstore.IncidentInput {
+func dnsIncident(in pgstore.IncidentInput, p contracts.DNSPayload) pgstore.IncidentInput {
 	in.Kind = "dns_validation"
 	in.Domain = p.Domain
 	in.Subject = p.Domain
