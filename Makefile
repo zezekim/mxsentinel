@@ -64,6 +64,15 @@ bus-ensure: ## Create/update JetStream streams
 selftest: ## Publish + read back one of each event family
 	go run ./cmd/mxctl bus selftest
 
+.PHONY: run-dnsd
+run-dnsd: ## Run the DNS validator (polls monitored domains every 60s)
+	go run ./cmd/dnsd --interval 60s
+
+.PHONY: replay
+replay: ## Replay the sample maillog into the bus (static demo tenant, no DB needed)
+	go run ./cmd/telemetryd --replay test/fixtures/maillog.sample --skip-db \
+	  --tenant 00000000-0000-0000-0000-000000000001 --node-ip 198.51.100.5
+
 .PHONY: bootstrap
 bootstrap: up ## Start stack, then migrate + ensure streams (waits for health)
 	@echo "waiting for services to become healthy..."

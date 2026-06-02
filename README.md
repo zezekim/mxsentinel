@@ -71,9 +71,20 @@ make up            # start Postgres, ClickHouse, Redis, NATS (JetStream), MinIO
 make migrate       # apply Postgres + ClickHouse migrations
 make bus-ensure    # create/update JetStream streams
 make selftest      # publish + read back one of each event family
+make run-dnsd      # DNS Intelligence validator: snapshot monitored domains, emit events
+make replay        # replay a sample Postfix maillog into the bus as smtp.* events
 make test          # unit tests (no services needed)
 # or: make bootstrap   # up + migrate + bus-ensure in one shot
 ```
+
+Two signal producers are now implemented:
+
+- **`cmd/dnsd`** — polls monitored domains, validates SPF/DKIM/DMARC/MX, writes a new
+  `dns_snapshots` row only when the posture changes, and publishes `dns.changed` /
+  `dns.validation_failed`. Validation logic lives in `internal/dns`.
+- **`cmd/telemetryd`** — parses Postfix maillogs into `smtp.*` events (metadata only —
+  recipients hashed, no bodies), publishes them, and spools to disk if the bus is down so
+  mail-flow telemetry is never lost. Parser lives in `internal/telemetry`.
 
 Config comes from `deploy/config/mxsentinel.example.yaml`, overridable by `MXS_*` env
 vars. The operator CLI is `cmd/mxctl` (`go run ./cmd/mxctl --help`). Code layout is

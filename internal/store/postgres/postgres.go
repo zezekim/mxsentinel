@@ -5,9 +5,11 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/zezekim/mxsentinel/internal/config"
@@ -92,6 +94,21 @@ func (s *Store) CreateDomain(ctx context.Context, tenantID, name string) (string
 		return "", fmt.Errorf("create domain: %w", err)
 	}
 	return id, nil
+}
+
+// ResolveTenantByDomain returns the tenant that owns a sending domain. The bool is false
+// (with nil error) when no such domain is registered.
+func (s *Store) ResolveTenantByDomain(ctx context.Context, name string) (string, bool, error) {
+	const q = `SELECT tenant_id FROM domains WHERE name = $1 LIMIT 1`
+	var tenantID string
+	err := s.Pool.QueryRow(ctx, q, name).Scan(&tenantID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("resolve tenant by domain %q: %w", name, err)
+	}
+	return tenantID, true, nil
 }
 
 // ListDomains returns all domains for a tenant.

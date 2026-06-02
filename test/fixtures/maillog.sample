@@ -1,0 +1,9 @@
+Jun  3 10:00:00 mail postfix/cleanup[1230]: 4F1AB2C3: message-id=<a1@example.com>
+Jun  3 10:00:00 mail postfix/qmgr[1234]: 4F1AB2C3: from=<bounce@example.com>, size=2048, nrcpt=1 (queue active)
+Jun  3 10:00:01 mail postfix/smtp[1240]: 4F1AB2C3: to=<user@gmail.com>, relay=gmail-smtp-in.l.google.com[142.250.1.2]:25, delay=1.2, delays=0.1/0/0.5/0.6, dsn=2.0.0, status=sent (250 2.0.0 OK 1700000000 a1-gsmtp)
+Jun  3 10:00:01 mail postfix/qmgr[1234]: 4F1AB2C3: removed
+Jun  3 10:01:00 mail postfix/cleanup[1230]: 9A8B7C6D: message-id=<b2@example.com>
+Jun  3 10:01:00 mail postfix/qmgr[1234]: 9A8B7C6D: from=<news@example.com>, size=5120, nrcpt=1 (queue active)
+Jun  3 10:01:02 mail postfix/smtp[1250]: 9A8B7C6D: to=<nobody@example.org>, relay=mx.example.org[203.0.113.9]:25, delay=2.1, dsn=5.1.1, status=bounced (host mx.example.org said: 550 5.1.1 <nobody@example.org>: User unknown)
+Jun  3 10:01:02 mail postfix/qmgr[1234]: 9A8B7C6D: removed
+Jun  3 10:02:00 mail postfix/smtp[1260]: AB12CD34: to=<vip@outlook.com>, relay=example-com.mail.protection.outlook.com[104.47.1.1]:25, delay=3.0, dsn=4.7.0, status=deferred (host example-com.mail.protection.outlook.com said: 421 4.7.0 message temporarily deferred due to sender reputation, blocked)
