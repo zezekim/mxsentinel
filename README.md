@@ -85,7 +85,9 @@ SMTP telemetry for per-provider rejection spikes, classifies the dominant reason
 correlates each spike against recent DNS changes to produce a root-cause hypothesis
 (*"DKIM selector removed at 10:44 → Outlook auth rejections at 10:45"*), publishing a
 `reputation.rate_anomaly` event. The pure logic lives in `internal/correlate`; the API
-exposes `GET /v1/analytics/{deliverability,rejections}`.
+exposes `GET /v1/analytics/{deliverability,rejections}`. `cmd/repd` checks sending IPs
+against DNSBLs (`internal/reputation`) and emits `reputation.blacklist_hit`. `cmd/incidentd`
+turns those signals into queryable **incidents** (`GET /v1/incidents`).
 
 The REST API (`cmd/apid`, see [`docs/api-v1.md`](docs/api-v1.md)) makes the collected
 data queryable: domain health, DNS drift timeline, a message explorer over ClickHouse,

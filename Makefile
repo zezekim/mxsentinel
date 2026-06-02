@@ -85,6 +85,10 @@ run-dmarcd: ## Watch ./dmarc-drop for DMARC report files and ingest them
 run-correld: ## Run the correlation engine (rejection spikes -> DNS-change root cause)
 	go run ./cmd/correld
 
+.PHONY: run-repd
+run-repd: ## Run the reputation monitor (DNSBL checks -> reputation.blacklist_hit)
+	go run ./cmd/repd
+
 .PHONY: run-incidentd
 run-incidentd: ## Run the incident recorder (reputation/DNS events -> incidents)
 	go run ./cmd/incidentd
