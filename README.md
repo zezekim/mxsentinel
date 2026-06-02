@@ -1,0 +1,69 @@
+# MX Sentinel
+
+**AI-powered email infrastructure observability and deliverability intelligence.**
+
+MX Sentinel correlates SMTP relay telemetry, DNS state, and provider responses into
+unified operational traces, then uses local AI inference to explain failures and
+recommend remediation. It is an *operational email intelligence platform* — closer in
+spirit to Datadog/Grafana/OpenTelemetry than to a DMARC reporting tool.
+
+The system follows one pipeline end to end:
+
+```
+Collect → Normalize → Correlate → Analyze → Explain → Remediate
+```
+
+> **Status:** Foundation phase. This repository currently contains **design docs,
+> data schemas, and event contracts only** — no application code yet. The chosen
+> implementation language for application services is **Go**. See
+> [`docs/tech-stack.md`](docs/tech-stack.md).
+
+---
+
+## Repository map
+
+| Path | What it is |
+| --- | --- |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Canonical vision & system architecture (the "why" and the big picture). |
+| [`docs/tech-stack.md`](docs/tech-stack.md) | Resolved technology decisions, Go monorepo layout, library choices. |
+| [`docs/phase-1-plan.md`](docs/phase-1-plan.md) | Detailed Phase 1 (Foundation) plan: workstreams, milestones, acceptance criteria. |
+| [`docs/data-model.md`](docs/data-model.md) | Storage architecture: what lives in Postgres vs ClickHouse vs Redis vs object storage, and why. |
+| [`docs/event-contracts.md`](docs/event-contracts.md) | Event streaming design: NATS subject hierarchy, the common event envelope, delivery semantics. |
+| [`schemas/postgres/`](schemas/postgres/) | PostgreSQL DDL — tenants, domains, users, DNS snapshots, alert rules, configuration. |
+| [`schemas/clickhouse/`](schemas/clickhouse/) | ClickHouse DDL — SMTP telemetry events and analytics rollups. |
+| [`schemas/events/`](schemas/events/) | JSON Schema contracts for every event family published to the bus. |
+
+---
+
+## Design principles (load-bearing)
+
+1. **Operational first.** This is infrastructure software, not marketing SaaS.
+2. **Observability over reports.** Raw, queryable telemetry beats static PDFs.
+3. **Correlation is the moat.** Value comes from normalizing and joining SMTP + DNS +
+   reputation data — not from charts.
+4. **AI assists operators.** It augments mail admins; it does not replace them.
+5. **Privacy by construction.** Never store message bodies or attachments. Analyze
+   headers, metadata, SMTP telemetry, and auth results only. See the privacy notes in
+   [`docs/data-model.md`](docs/data-model.md).
+
+---
+
+## Development phases
+
+| Phase | Theme | Scope |
+| --- | --- | --- |
+| **1 — Foundation** *(current)* | Get data flowing | Relay telemetry, DNS validator, DMARC ingestion, Postgres schema, dashboard MVP. |
+| **2 — Intelligence** | Make data mean something | Correlation engine, provider analytics, rejection analysis, reputation tracking. |
+| **3 — AI Diagnostics** | Explain & recommend | Root-cause analysis, anomaly detection, remediation recommendations. |
+| **4 — Enterprise** | Scale & isolate | HA relay clusters, RBAC, public APIs, multi-region, tenant federation. |
+
+Phase 1 is fully specified in [`docs/phase-1-plan.md`](docs/phase-1-plan.md).
+
+---
+
+## Getting oriented (for a new contributor or session)
+
+1. Read [`ARCHITECTURE.md`](ARCHITECTURE.md) for the system shape.
+2. Read [`docs/tech-stack.md`](docs/tech-stack.md) for *how* we build it.
+3. Pick a workstream from [`docs/phase-1-plan.md`](docs/phase-1-plan.md).
+4. The schemas in [`schemas/`](schemas/) are the contracts your service must honor.

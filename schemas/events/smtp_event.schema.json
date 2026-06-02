@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mxsentinel.dev/events/smtp_event.schema.json",
+  "title": "SMTP Telemetry Event",
+  "description": "One event per SMTP transaction outcome. Maps 1:1 to the ClickHouse smtp_events table. PRIVACY: no body, no subject; recipient stored as domain + keyed hash.",
+  "allOf": [
+    { "$ref": "https://schemas.mxsentinel.dev/events/envelope.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "event_type": {
+          "enum": ["smtp.received", "smtp.delivered", "smtp.deferred", "smtp.bounced", "smtp.rejected"]
+        },
+        "payload": { "$ref": "#/$defs/payload" }
+      },
+      "required": ["payload"]
+    }
+  ],
+  "$defs": {
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome"],
+      "properties": {
+        "outcome": {
+          "type": "string",
+          "enum": ["received", "delivered", "deferred", "bounced", "rejected"]
+        },
+        "bounce_class": {
+          "type": "string",
+          "enum": ["none", "hard", "soft", "block", "spam", "policy", "auth", "reputation", "technical", "unknown"],
+          "default": "none"
+        },
+
+        "message_id":    { "type": "string" },
+        "queue_id":      { "type": "string" },
+        "session_id":    { "type": "string" },
+        "source_ip":     { "type": "string", "description": "Inbound client (cPanel/Exim smart host)." },
+        "relay_ip":      { "type": "string", "description": "Our outbound IP." },
+        "ip_pool":       { "type": "string" },
+        "dkim_selector": { "type": "string" },
+        "dkim_domain":   { "type": "string" },
+        "envelope_from": { "type": "string" },
+        "from_domain":   { "type": "string" },
+
+        "recipient_domain": { "type": "string" },
+        "recipient_hash":   { "type": "string", "description": "Keyed hash of the full RCPT TO. Full address is NOT transmitted." },
+
+        "provider": { "type": "string", "description": "Classified destination provider, e.g. gmail, microsoft, yahoo." },
+        "mx_host":  { "type": "string" },
+
+        "spf_result":   { "type": "string", "enum": ["none", "pass", "fail", "softfail", "neutral", "temperror", "permerror"] },
+        "dkim_result":  { "type": "string", "enum": ["none", "pass", "fail", "temperror", "permerror"] },
+        "dmarc_result": { "type": "string", "enum": ["none", "pass", "fail"] },
+
+        "tls": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "used":     { "type": "boolean" },
+            "version":  { "type": "string" },
+            "cipher":   { "type": "string" },
+            "verified": { "type": "boolean" }
+          }
+        },
+
+        "smtp_code":       { "type": "integer", "minimum": 100, "maximum": 599 },
+        "enhanced_status": { "type": "string", "pattern": "^[245]\\.[0-9]+\\.[0-9]+$" },
+        "response_text":   { "type": "string", "maxLength": 512, "description": "Remote MTA response, truncated." },
+
+        "size_bytes":          { "type": "integer", "minimum": 0 },
+        "queue_time_ms":       { "type": "integer", "minimum": 0 },
+        "delivery_latency_ms": { "type": "integer", "minimum": 0 },
+
+        "attrs": {
+          "type": "object",
+          "description": "Extra extracted key/values not yet promoted to first-class fields.",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    }
+  }
+}

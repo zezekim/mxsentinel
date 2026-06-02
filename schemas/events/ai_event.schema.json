@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mxsentinel.dev/events/ai_event.schema.json",
+  "title": "AI Reasoning Event",
+  "description": "Output of the AI reasoning layer (Phase 3): anomaly classification, remediation recommendation, or root-cause summary. Reasons over metadata only; references evidence by event_id.",
+  "allOf": [
+    { "$ref": "https://schemas.mxsentinel.dev/events/envelope.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "event_type": { "enum": ["ai.anomaly", "ai.remediation", "ai.rca"] },
+        "payload": { "$ref": "#/$defs/payload" }
+      },
+      "required": ["payload"]
+    }
+  ],
+  "$defs": {
+    "recommendation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "summary"],
+      "properties": {
+        "action": {
+          "type": "string",
+          "description": "Machine-actionable hint, e.g. restore_dkim_selector, isolate_ip, fix_spf_lookups."
+        },
+        "summary": { "type": "string", "description": "Human-readable instruction." },
+        "target":  { "type": "string", "description": "What to act on, e.g. selector2._domainkey.example.com." },
+        "priority": { "type": "string", "enum": ["low", "medium", "high", "urgent"] }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "title", "narrative", "confidence"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["anomaly", "remediation", "rca"]
+        },
+        "title": { "type": "string", "description": "Short headline, e.g. 'DKIM selector missing after DNS change'." },
+        "narrative": {
+          "type": "string",
+          "description": "Human-readable explanation / failure narrative."
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Model confidence in this conclusion."
+        },
+        "impact": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "affected_messages": { "type": "integer", "minimum": 0 },
+            "provider":          { "type": "string" },
+            "domain":            { "type": "string" }
+          }
+        },
+        "recommendations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/recommendation" }
+        },
+        "evidence_event_ids": {
+          "type": "array",
+          "description": "event_ids of the raw signals this conclusion was derived from, so the UI can link back.",
+          "items": { "type": "string", "format": "uuid" }
+        },
+        "model": {
+          "type": "string",
+          "description": "Model that produced this, e.g. llama3:8b via ollama."
+        }
+      }
+    }
+  }
+}

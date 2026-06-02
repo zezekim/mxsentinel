@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mxsentinel.dev/events/reputation_event.schema.json",
+  "title": "Reputation Signal Event",
+  "description": "Blacklist (RBL) hits, complaint/FBL spikes, and rate anomalies for an IP, IP pool, or sending domain.",
+  "allOf": [
+    { "$ref": "https://schemas.mxsentinel.dev/events/envelope.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "event_type": { "enum": ["reputation.blacklist_hit", "reputation.complaint_spike", "reputation.rate_anomaly"] },
+        "payload": { "$ref": "#/$defs/payload" }
+      },
+      "required": ["payload"]
+    }
+  ],
+  "$defs": {
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["signal", "subject_kind", "subject", "severity"],
+      "properties": {
+        "signal": {
+          "type": "string",
+          "enum": ["blacklist_hit", "complaint_spike", "rate_anomaly"]
+        },
+        "subject_kind": {
+          "type": "string",
+          "enum": ["ip", "ip_pool", "domain"],
+          "description": "What the signal is about."
+        },
+        "subject": {
+          "type": "string",
+          "description": "The IP address, pool name, or domain the signal concerns."
+        },
+        "severity": { "type": "string", "enum": ["info", "warning", "critical"] },
+        "source": {
+          "type": "string",
+          "description": "Origin of the signal, e.g. the RBL zone (zen.spamhaus.org) or 'fbl:microsoft'."
+        },
+        "observed_value": { "type": "number", "description": "e.g. complaint rate or current send rate." },
+        "baseline_value": { "type": "number", "description": "Expected value the anomaly is measured against." },
+        "window_secs":    { "type": "integer", "minimum": 0 },
+        "detail":         { "type": "object", "additionalProperties": true }
+      }
+    }
+  }
+}

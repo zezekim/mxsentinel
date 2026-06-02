@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mxsentinel.dev/events/envelope.schema.json",
+  "title": "MX Sentinel Event Envelope",
+  "description": "Common wrapper for every message published to the event bus. The payload is type-specific and validated against the schema matching `event_type`. See docs/event-contracts.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "event_type",
+    "tenant_id",
+    "occurred_at",
+    "ingested_at",
+    "source",
+    "correlation",
+    "payload"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Semver of the payload schema for this event_type.",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "event_id": {
+      "type": "string",
+      "description": "Globally unique event id (UUIDv7, time-sortable). Consumers dedupe on this.",
+      "format": "uuid"
+    },
+    "event_type": {
+      "type": "string",
+      "description": "Dotted event type, e.g. smtp.delivered, dns.changed.",
+      "pattern": "^(smtp|dns|reputation|ai)\\.[a-z_]+$"
+    },
+    "tenant_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the real-world event happened (relay timestamp, DNS poll time)."
+    },
+    "ingested_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When MX Sentinel observed/published it."
+    },
+    "source": {
+      "type": "string",
+      "description": "Emitting component and node, e.g. telemetryd@relay-03.",
+      "minLength": 1
+    },
+    "correlation": { "$ref": "#/$defs/correlation" },
+    "payload": {
+      "type": "object",
+      "description": "Type-specific body; validate against the schema for event_type."
+    }
+  },
+  "$defs": {
+    "correlation": {
+      "type": "object",
+      "description": "Correlation keys lifted out of the payload so the correlation engine can join events without parsing payloads. All fields optional; presence depends on event type.",
+      "additionalProperties": false,
+      "properties": {
+        "message_id":    { "type": "string" },
+        "queue_id":      { "type": "string" },
+        "session_id":    { "type": "string" },
+        "source_ip":     { "type": "string" },
+        "relay_ip":      { "type": "string" },
+        "dkim_selector": { "type": "string" },
+        "envelope_from": { "type": "string" },
+        "domain":        { "type": "string" }
+      }
+    }
+  }
+}

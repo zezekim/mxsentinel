@@ -1,0 +1,21 @@
+# Local Claude Code settings (machine-specific)
+.claude/settings.local.json
+
+# Go build output
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+coverage.*
+
+# Env / secrets — never commit
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/

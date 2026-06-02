@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.mxsentinel.dev/events/dns_event.schema.json",
+  "title": "DNS Intelligence Event",
+  "description": "Emitted by dnsd when a domain's DNS state changes (new snapshot) or a validation finding crosses a severity threshold. Powers the 'DNS changed at 10:44 -> rejections at 10:45' correlation.",
+  "allOf": [
+    { "$ref": "https://schemas.mxsentinel.dev/events/envelope.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "event_type": { "enum": ["dns.changed", "dns.validation_failed"] },
+        "payload": { "$ref": "#/$defs/payload" }
+      },
+      "required": ["payload"]
+    }
+  ],
+  "$defs": {
+    "category": {
+      "type": "string",
+      "enum": ["spf", "dkim", "dmarc", "mx", "ptr", "a_aaaa", "dnssec", "mta_sts", "tls_rpt", "smtp_tls", "bimi", "arc"]
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category", "severity", "code", "message"],
+      "properties": {
+        "category": { "$ref": "#/$defs/category" },
+        "severity": { "type": "string", "enum": ["info", "warning", "critical"] },
+        "code":     { "type": "string", "description": "Stable machine code, e.g. SPF_LOOKUP_LIMIT, DKIM_STALE_SELECTOR." },
+        "message":  { "type": "string" },
+        "detail":   { "type": "object", "additionalProperties": true }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["domain", "domain_id", "snapshot_id"],
+      "properties": {
+        "domain":      { "type": "string" },
+        "domain_id":   { "type": "string", "format": "uuid" },
+        "snapshot_id": { "type": "string", "format": "uuid", "description": "The dns_snapshots row this event references." },
+        "previous_snapshot_id": { "type": "string", "format": "uuid" },
+        "checksum":    { "type": "string" },
+        "changed_categories": {
+          "type": "array",
+          "description": "Which record categories differ from the previous snapshot (for dns.changed).",
+          "items": { "$ref": "#/$defs/category" }
+        },
+        "findings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/finding" }
+        }
+      }
+    }
+  }
+}
