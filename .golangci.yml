@@ -1,0 +1,19 @@
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+    - revive
+
+issues:
+  exclude-rules:
+    # Generated/embedded SQL and schema files are not linted as Go.
+    - path: _test\.go
+      linters:
+        - errcheck

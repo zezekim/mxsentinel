@@ -61,6 +61,26 @@ Phase 1 is fully specified in [`docs/phase-1-plan.md`](docs/phase-1-plan.md).
 
 ---
 
+## Local development (Phase 1 substrate)
+
+The Go substrate (event bus, stores, migrations, operator CLI) is in place. Requires Go
+1.26+ and Docker.
+
+```bash
+make up            # start Postgres, ClickHouse, Redis, NATS (JetStream), MinIO
+make migrate       # apply Postgres + ClickHouse migrations
+make bus-ensure    # create/update JetStream streams
+make selftest      # publish + read back one of each event family
+make test          # unit tests (no services needed)
+# or: make bootstrap   # up + migrate + bus-ensure in one shot
+```
+
+Config comes from `deploy/config/mxsentinel.example.yaml`, overridable by `MXS_*` env
+vars. The operator CLI is `cmd/mxctl` (`go run ./cmd/mxctl --help`). Code layout is
+described in [`docs/tech-stack.md`](docs/tech-stack.md).
+
+---
+
 ## Getting oriented (for a new contributor or session)
 
 1. Read [`ARCHITECTURE.md`](ARCHITECTURE.md) for the system shape.

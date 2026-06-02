@@ -1,0 +1,72 @@
+# MX Sentinel — developer Makefile.
+COMPOSE := docker compose -f deploy/docker-compose.yml
+CONFIG  ?= deploy/config/mxsentinel.example.yaml
+export MXS_CONFIG := $(CONFIG)
+
+.PHONY: help
+help: ## Show this help
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+	  awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
+
+.PHONY: tidy
+tidy: ## go mod tidy
+	go mod tidy
+
+.PHONY: build
+build: ## Build all binaries into ./bin
+	go build -o bin/ ./...
+
+.PHONY: vet
+vet: ## go vet
+	go vet ./...
+
+.PHONY: test
+test: ## Run unit tests (no external services needed)
+	go test ./...
+
+.PHONY: lint
+lint: ## Run golangci-lint (if installed)
+	@command -v golangci-lint >/dev/null 2>&1 && golangci-lint run || echo "golangci-lint not installed; skipping"
+
+.PHONY: fmt
+fmt: ## Format code
+	gofmt -w .
+
+.PHONY: up
+up: ## Start the local dev stack
+	$(COMPOSE) up -d
+
+.PHONY: down
+down: ## Stop the local dev stack
+	$(COMPOSE) down
+
+.PHONY: logs
+logs: ## Tail dev stack logs
+	$(COMPOSE) logs -f
+
+.PHONY: migrate
+migrate: ## Apply all migrations (postgres + clickhouse)
+	go run ./cmd/mxctl migrate up
+
+.PHONY: migrate-status
+migrate-status: ## Show migration status
+	go run ./cmd/mxctl migrate status
+
+.PHONY: seed
+seed: ## Seed a demo tenant + domain
+	go run ./cmd/mxctl seed
+
+.PHONY: bus-ensure
+bus-ensure: ## Create/update JetStream streams
+	go run ./cmd/mxctl bus ensure
+
+.PHONY: selftest
+selftest: ## Publish + read back one of each event family
+	go run ./cmd/mxctl bus selftest
+
+.PHONY: bootstrap
+bootstrap: up ## Start stack, then migrate + ensure streams (waits for health)
+	@echo "waiting for services to become healthy..."
+	@sleep 8
+	$(MAKE) migrate
+	$(MAKE) bus-ensure
