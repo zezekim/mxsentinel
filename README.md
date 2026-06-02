@@ -112,6 +112,14 @@ Config comes from `deploy/config/mxsentinel.example.yaml`, overridable by `MXS_*
 vars. The operator CLI is `cmd/mxctl` (`go run ./cmd/mxctl --help`). Code layout is
 described in [`docs/tech-stack.md`](docs/tech-stack.md).
 
+**Run the whole platform in containers.** Each service has a multi-stage build (the Go
+binaries land in a distroless static image; the dashboard ships as a Next.js standalone
+bundle). `make up` starts just the backing services for host development; `make up-app`
+builds and runs everything — backing services, the Go daemons, and the dashboard — under
+the compose `app` profile (a one-shot `migrate` service applies migrations first).
+`telemetryd` is left out of the default profile since it tails a host maillog (see the
+note in `deploy/docker-compose.yml`).
+
 ---
 
 ## Getting oriented (for a new contributor or session)

@@ -6,8 +6,37 @@
 #   MXS_CONFIG=deploy/config/mxsentinel.example.yaml go run ./cmd/mxctl migrate up
 #
 # Do NOT over-engineer orchestration early (ARCHITECTURE.md §10) — compose only.
+#
+# Default `up` starts only the backing services (for host-run `go run` development).
+# To run the full platform (Go services + dashboard) in containers too, enable the
+# "app" profile:
+#   docker compose -f deploy/docker-compose.yml --profile app up --build
 
 name: mxsentinel
+
+# Shared environment for the Go services: point them at the compose service hostnames
+# (NOT localhost). Note MinIO's S3 API is on container port 9000 here.
+x-app-env: &app-env
+  MXS_LOGLEVEL: info
+  MXS_HTTPADDR: ":9090"
+  MXS_POSTGRES_DSN: "postgres://mxsentinel:mxsentinel@postgres:5432/mxsentinel?sslmode=disable"
+  MXS_CLICKHOUSE_ADDR: "clickhouse:9000"
+  MXS_CLICKHOUSE_DATABASE: "mxsentinel"
+  MXS_REDIS_ADDR: "redis:6379"
+  MXS_NATS_URL: "nats://nats:4222"
+  MXS_OBJECTSTORE_ENDPOINT: "minio:9000"
+  MXS_OBJECTSTORE_BUCKET: "mxsentinel"
+  MXS_OBJECTSTORE_ACCESSKEY: "minioadmin"
+  MXS_OBJECTSTORE_SECRETKEY: "minioadmin"
+
+# Shared definition for every Go service: one image (built from the root Dockerfile),
+# only started under the "app" profile.
+x-app: &app
+  build:
+    context: ..
+  image: mxsentinel:local
+  profiles: ["app"]
+  environment: *app-env
 
 services:
   postgres:
@@ -86,6 +115,80 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # --- Application services (profile: app) ---------------------------------
+
+  migrate:
+    <<: *app
+    command: ["/usr/local/bin/mxctl", "migrate", "up"]
+    restart: "no"
+    depends_on:
+      postgres: {condition: service_healthy}
+      clickhouse: {condition: service_healthy}
+
+  apid:
+    <<: *app
+    command: ["/usr/local/bin/apid"]
+    ports:
+      - "8080:8080"
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      postgres: {condition: service_healthy}
+      clickhouse: {condition: service_healthy}
+
+  dnsd:
+    <<: *app
+    command: ["/usr/local/bin/dnsd"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      nats: {condition: service_healthy}
+
+  correld:
+    <<: *app
+    command: ["/usr/local/bin/correld"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      nats: {condition: service_healthy}
+
+  incidentd:
+    <<: *app
+    command: ["/usr/local/bin/incidentd"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      nats: {condition: service_healthy}
+
+  repd:
+    <<: *app
+    command: ["/usr/local/bin/repd"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      nats: {condition: service_healthy}
+
+  dmarcd:
+    <<: *app
+    command: ["/usr/local/bin/dmarcd", "--dir", "/drop"]
+    volumes:
+      - ../dmarc-drop:/drop
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      minio: {condition: service_healthy}
+
+  dashboard:
+    build:
+      context: ../web
+      args:
+        NEXT_PUBLIC_API_BASE: "http://localhost:8080"
+    image: mxsentinel-dashboard:local
+    profiles: ["app"]
+    ports:
+      - "3000:3000"
+    depends_on:
+      - apid
+
+  # telemetryd is intentionally not in the default app profile — it tails a host maillog.
+  # Run it ad hoc against the same image, mounting your log:
+  #   docker compose -f deploy/docker-compose.yml run --rm \
+  #     -v /var/log/maillog:/maillog:ro apid /usr/local/bin/telemetryd --follow /maillog
 
 volumes:
   pgdata:

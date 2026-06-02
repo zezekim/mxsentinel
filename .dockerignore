@@ -1,0 +1,8 @@
+# Context for the Go service image (root Dockerfile). The dashboard has its own context.
+.git
+.github
+bin/
+/web
+dmarc-drop/
+telemetry-spool.ndjson
+*.log

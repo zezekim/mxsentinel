@@ -36,9 +36,13 @@ fmt: ## Format code
 up: ## Start the local dev stack
 	$(COMPOSE) up -d
 
+.PHONY: up-app
+up-app: ## Build + run the FULL platform in containers (services + dashboard)
+	$(COMPOSE) --profile app up --build -d
+
 .PHONY: down
-down: ## Stop the local dev stack
-	$(COMPOSE) down
+down: ## Stop the local dev stack (add --profile app to stop app services too)
+	$(COMPOSE) --profile app down
 
 .PHONY: logs
 logs: ## Tail dev stack logs
