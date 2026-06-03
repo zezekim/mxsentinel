@@ -200,14 +200,17 @@ Removes the credential → `{ "deleted": true }` (404 if not found for the tenan
 
 ### `GET /v1/settings` (read)
 Returns the tenant's mail settings → `{ "settings": { "spf_include","dkim_selector",
-"dmarc_policy","dmarc_rua","dmarc_ruf","relay_host","relay_port" } }`. Unset fields fall
-back to defaults (`dkim_selector=mxs`, `dmarc_policy=none`, `relay_port=587`).
+"dmarc_policy","dmarc_rua","dmarc_ruf","relay_host","relay_port","resolver_address",
+"resolver_timeout_secs" } }`. Unset fields fall back to defaults (`dkim_selector=mxs`,
+`dmarc_policy=none`, `relay_port=587`, `resolver_timeout_secs=5`).
 
 ### `PUT /v1/settings` (admin)
 Replaces the tenant's mail settings (same shape) → `{ "settings": { … } }`.
-`dmarc_policy` must be `none`|`quarantine`|`reject`. Stored under the `mail` key of the
-tenant's `settings` JSONB. These drive the recommended DNS records and the smarthost
-connection instructions (see [smarthost.md](smarthost.md)).
+`dmarc_policy` must be `none`|`quarantine`|`reject`. `resolver_address` is an IP/host
+(optionally `:port`) or empty for the system resolver; `resolver_timeout_secs` is 1–60.
+Stored under the `mail` key of the tenant's `settings` JSONB. These drive the recommended
+DNS records, the smarthost connection instructions (see [smarthost.md](smarthost.md)), and
+which DNS server `dnsd` + on-demand rechecks use to validate SPF/DKIM/DMARC.
 
 ## Notes
 - Routing uses the Go 1.22 stdlib `net/http` mux (`GET /v1/domains/{id}/health`,

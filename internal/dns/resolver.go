@@ -39,6 +39,43 @@ func NewSystemResolver(timeout time.Duration) *SystemResolver {
 	return &SystemResolver{r: net.DefaultResolver, timeout: timeout}
 }
 
+// NewResolverWithServer returns a resolver that sends every query to a specific DNS
+// server (e.g. "1.1.1.1" or "9.9.9.9:53") instead of the host's configured resolver. A
+// bare address gets the default DNS port (53). timeout defaults to 5s if zero.
+func NewResolverWithServer(server string, timeout time.Duration) *SystemResolver {
+	if timeout == 0 {
+		timeout = 5 * time.Second
+	}
+	addr := withDefaultDNSPort(server)
+	d := net.Dialer{Timeout: timeout}
+	r := &net.Resolver{
+		PreferGo: true, // use Go's built-in DNS client so Dial is honored
+		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return d.DialContext(ctx, network, addr)
+		},
+	}
+	return &SystemResolver{r: r, timeout: timeout}
+}
+
+// ResolverFor builds a resolver from tenant-configured settings: a custom server when
+// address is non-empty, otherwise the host's system resolver. timeoutSecs <= 0 means the
+// 5s default.
+func ResolverFor(address string, timeoutSecs int) Resolver {
+	timeout := time.Duration(timeoutSecs) * time.Second
+	if address == "" {
+		return NewSystemResolver(timeout)
+	}
+	return NewResolverWithServer(address, timeout)
+}
+
+// withDefaultDNSPort appends :53 to a bare host/IP. host:port values pass through.
+func withDefaultDNSPort(server string) string {
+	if _, _, err := net.SplitHostPort(server); err == nil {
+		return server
+	}
+	return net.JoinHostPort(server, "53")
+}
+
 func (s *SystemResolver) ctx(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, s.timeout)
 }

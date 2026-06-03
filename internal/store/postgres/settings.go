@@ -18,6 +18,11 @@ type MailSettings struct {
 	DMARCRuf     string `json:"dmarc_ruf"`     // forensic report address (ruf=mailto:…)
 	RelayHost    string `json:"relay_host"`    // submission host shown in smarthost instructions
 	RelayPort    int    `json:"relay_port"`    // submission port (typically 587)
+
+	// DNS resolver used for SPF/DKIM/DMARC validation. Empty ResolverAddress = the host's
+	// system resolver. ResolverAddress may be a bare IP/host or host:port (e.g. 1.1.1.1).
+	ResolverAddress     string `json:"resolver_address"`
+	ResolverTimeoutSecs int    `json:"resolver_timeout_secs"`
 }
 
 const mailSettingsKey = "mail"

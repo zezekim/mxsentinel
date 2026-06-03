@@ -5,6 +5,7 @@
 #     sudo bash deploy/install.sh                    # full provision + deploy
 #     bash deploy/install.sh --app-only              # skip OS provisioning (Docker etc. already present)
 #     sudo bash deploy/install.sh --wire-relay-sasl  # (re-)wire relay SASL on an existing box, then exit
+#     bash deploy/install.sh --restart               # restart the running stack, then exit
 #
 # It installs every dependency (Docker, optionally Ollama, optionally Postfix+OpenDKIM),
 # configures a firewall, then deploys the MX Sentinel stack behind Caddy (automatic TLS)
@@ -18,11 +19,13 @@ set -euo pipefail
 
 APP_ONLY=0
 WIRE_RELAY_SASL=0
+RESTART_ONLY=0
 for arg in "$@"; do
 	case "$arg" in
 		--app-only) APP_ONLY=1 ;;
 		--wire-relay-sasl) WIRE_RELAY_SASL=1 ;;
-		-h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+		--restart) RESTART_ONLY=1 ;;
+		-h|--help) sed -n '2,17p' "$0"; exit 0 ;;
 		*) echo "unknown flag: $arg" >&2; exit 2 ;;
 	esac
 done
@@ -70,17 +73,18 @@ if [ -r /etc/os-release ]; then
 fi
 is_debian() { [ "$OS_ID" = "debian" ] || [ "$OS_ID" = "ubuntu" ] || case "$OS_LIKE" in *debian*) true ;; *) false ;; esac; }
 
-if [ "$APP_ONLY" -eq 0 ]; then
+# --restart just bounces containers, so it needs neither root nor Debian (only Docker).
+if [ "$APP_ONLY" -eq 0 ] && [ "$RESTART_ONLY" -eq 0 ]; then
 	[ "$(id -u)" -eq 0 ] || die "full install needs root — run: sudo bash deploy/install.sh (or use --app-only)"
 	is_debian || die "automatic provisioning supports Debian/Ubuntu. On another OS, install Docker (+ Postfix) yourself and re-run with --app-only."
 fi
 have openssl || die "openssl not found"
 
 # ---- collect settings ------------------------------------------------------
-# Skipped for --wire-relay-sasl: that is a focused maintenance run (re-wire Dovecot only),
-# not a deploy, so it neither prompts nor writes deploy/.env.
+# Skipped for --wire-relay-sasl and --restart: those are focused maintenance runs, not a
+# deploy, so they neither prompt nor write deploy/.env.
 REUSE_ENV=0
-if [ "$WIRE_RELAY_SASL" -eq 0 ]; then
+if [ "$WIRE_RELAY_SASL" -eq 0 ] && [ "$RESTART_ONLY" -eq 0 ]; then
 if [ -f "$ENV_FILE" ]; then
 	if yesno "$ENV_FILE exists. Reuse it and just (re)deploy?" y; then
 		REUSE_ENV=1
@@ -353,6 +357,24 @@ if [ "$WIRE_RELAY_SASL" -eq 1 ]; then
 	bold "Done ✓ — relay SASL wired"
 	info "Submission endpoint: ${MXS_DOMAIN:-this host}:587 (STARTTLS, AUTH PLAIN/LOGIN)"
 	info "Manage users in the dashboard (SMTP Users) or: mxctl smtp-user create … (see docs/smarthost.md)"
+	exit 0
+fi
+
+# Focused maintenance path: restart the running stack (no provisioning, no rebuild), then
+# exit. Restarts the app profile, plus relay (telemetryd) when this box runs the relay.
+if [ "$RESTART_ONLY" -eq 1 ]; then
+	have docker || die "Docker not found — nothing to restart"
+	[ -f "$ENV_FILE" ] || die "$ENV_FILE not found — run a full install before --restart"
+	set -a
+	# shellcheck source=/dev/null
+	. "$ENV_FILE"
+	set +a
+	rprof=(--profile app)
+	[ -n "${RELAY_NODE_IP:-}" ] && rprof+=(--profile relay)
+	bold "Restarting MX Sentinel…"
+	docker compose -f "$BASE" -f "$PROD" --env-file "$ENV_FILE" "${rprof[@]}" restart
+	bold "Done ✓ — stack restarted"
+	info "Logs: docker compose -f $BASE -f $PROD --env-file $ENV_FILE ${rprof[*]} logs -f"
 	exit 0
 fi
 

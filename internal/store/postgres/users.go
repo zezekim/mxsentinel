@@ -75,6 +75,19 @@ func (s *Store) UpdateUserPassword(ctx context.Context, userID, tenantID, passwo
 	return tag.RowsAffected() > 0, nil
 }
 
+// UpdateUserPasswordByEmail sets a user's bcrypt password hash, looked up by tenant +
+// email (used by `mxctl user set-password` for out-of-band resets). found=false (nil
+// error) when no matching user exists.
+func (s *Store) UpdateUserPasswordByEmail(ctx context.Context, tenantID, email, passwordHash string) (bool, error) {
+	const q = `UPDATE users SET password_hash = $3, updated_at = now()
+	           WHERE tenant_id = $1 AND email = $2`
+	tag, err := s.Pool.Exec(ctx, q, tenantID, email, passwordHash)
+	if err != nil {
+		return false, fmt.Errorf("update user password by email: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 // ListUsers returns a tenant's users (without password hashes).
 func (s *Store) ListUsers(ctx context.Context, tenantID string) ([]User, error) {
 	const q = `SELECT id, tenant_id, email::text, role::text, status::text

@@ -52,6 +52,10 @@ up-prod: ## Production deploy behind Caddy TLS (needs deploy/.env; see docs/depl
 down: ## Stop the local dev stack (add --profile app to stop app services too)
 	$(COMPOSE) --profile app down
 
+.PHONY: restart
+restart: ## Restart the local dev stack (services + app). For prod: bash deploy/install.sh --restart
+	$(COMPOSE) --profile app restart
+
 .PHONY: logs
 logs: ## Tail dev stack logs
 	$(COMPOSE) logs -f
