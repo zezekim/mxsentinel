@@ -17,22 +17,25 @@ import (
 	"github.com/zezekim/mxsentinel/internal/config"
 	dnsx "github.com/zezekim/mxsentinel/internal/dns"
 	"github.com/zezekim/mxsentinel/internal/obs"
+	"github.com/zezekim/mxsentinel/internal/ratelimit"
 	chstore "github.com/zezekim/mxsentinel/internal/store/clickhouse"
 	pgstore "github.com/zezekim/mxsentinel/internal/store/postgres"
+	"github.com/zezekim/mxsentinel/internal/store/redisstore"
 )
 
 func main() {
 	addr := flag.String("addr", ":8080", "API listen address")
 	corsOrigin := flag.String("cors-origin", "*", "Access-Control-Allow-Origin value")
+	rateLimit := flag.Int("rate-limit", 600, "max requests per tenant per minute (0 disables)")
 	flag.Parse()
 
-	if err := run(*addr, *corsOrigin); err != nil {
+	if err := run(*addr, *corsOrigin, *rateLimit); err != nil {
 		fmt.Fprintln(os.Stderr, "apid:", err)
 		os.Exit(1)
 	}
 }
 
-func run(addr, corsOrigin string) error {
+func run(addr, corsOrigin string, rateLimit int) error {
 	cfg, err := config.Load(os.Getenv("MXS_CONFIG"))
 	if err != nil {
 		return err
@@ -63,8 +66,23 @@ func run(addr, corsOrigin string) error {
 	}
 	defer ch.Close()
 
+	// Per-tenant rate limiting: prefer a shared Redis counter (works across apid
+	// instances); fall back to in-process if Redis is unavailable.
+	var limiter api.Limiter
+	if rateLimit > 0 {
+		var counter ratelimit.Counter = ratelimit.NewMemCounter()
+		if rs, rerr := redisstore.New(ctx, cfg.Redis); rerr != nil {
+			log.Warn("redis unavailable; using in-memory rate limiter", "err", rerr)
+		} else {
+			defer func() { _ = rs.Close() }()
+			counter = rs.RateCounter()
+			log.Info("rate limiting via redis")
+		}
+		limiter = ratelimit.New(counter, rateLimit, time.Minute)
+	}
+
 	resolver := dnsx.NewSystemResolver(5 * time.Second)
-	apiSrv := api.New(pg, ch, resolver, log, corsOrigin)
+	apiSrv := api.New(pg, ch, resolver, log, corsOrigin, limiter)
 
 	httpSrv := &http.Server{
 		Addr:              addr,

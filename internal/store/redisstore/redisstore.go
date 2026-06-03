@@ -18,6 +18,27 @@ type Store struct {
 	Client *redis.Client
 }
 
+// RateCounter is a Redis-backed fixed-window counter; it satisfies ratelimit.Counter and
+// lets multiple apid instances share one limit.
+type RateCounter struct {
+	client *redis.Client
+}
+
+// RateCounter returns a counter over this store's client.
+func (s *Store) RateCounter() *RateCounter { return &RateCounter{client: s.Client} }
+
+// Incr increments key and, on the first increment of a window, sets its TTL.
+func (c *RateCounter) Incr(ctx context.Context, key string, window time.Duration) (int64, error) {
+	n, err := c.client.Incr(ctx, key).Result()
+	if err != nil {
+		return 0, fmt.Errorf("ratelimit incr: %w", err)
+	}
+	if n == 1 {
+		_ = c.client.Expire(ctx, key, window).Err()
+	}
+	return n, nil
+}
+
 // New connects to Redis and verifies connectivity.
 func New(ctx context.Context, cfg config.RedisConfig) (*Store, error) {
 	c := redis.NewClient(&redis.Options{

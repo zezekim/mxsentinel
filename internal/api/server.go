@@ -20,15 +20,17 @@ type Server struct {
 	resolver   dnsx.Resolver
 	log        *slog.Logger
 	corsOrigin string
+	limiter    Limiter // nil disables rate limiting
 }
 
 // New constructs the API server. corsOrigin is the Access-Control-Allow-Origin value
-// (use "*" for local dev, or the dashboard origin).
-func New(pg *pgstore.Store, ch *chstore.Store, resolver dnsx.Resolver, log *slog.Logger, corsOrigin string) *Server {
+// (use "*" for local dev, or the dashboard origin). limiter may be nil to disable
+// per-tenant rate limiting.
+func New(pg *pgstore.Store, ch *chstore.Store, resolver dnsx.Resolver, log *slog.Logger, corsOrigin string, limiter Limiter) *Server {
 	if corsOrigin == "" {
 		corsOrigin = "*"
 	}
-	return &Server{pg: pg, ch: ch, resolver: resolver, log: log, corsOrigin: corsOrigin}
+	return &Server{pg: pg, ch: ch, resolver: resolver, log: log, corsOrigin: corsOrigin, limiter: limiter}
 }
 
 // Handler returns the fully-wired HTTP handler (routes + middleware).
@@ -46,9 +48,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/analytics/rejections", s.requireScope(ScopeRead, s.handleRejections))
 	mux.HandleFunc("GET /v1/incidents", s.requireScope(ScopeRead, s.handleListIncidents))
 	mux.HandleFunc("POST /v1/incidents/{id}/resolve", s.requireScope(ScopeWrite, s.handleResolveIncident))
+	mux.HandleFunc("GET /v1/audit", s.requireScope(ScopeRead, s.handleAudit))
 
-	// recoverer (outermost) → logger → cors (handles preflight) → auth → routes
-	return chain(mux, s.recoverer, s.requestLogger, s.cors, s.requireAuth)
+	// recoverer → logger → cors (preflight) → auth → rate limit (per tenant) →
+	// audit (records mutations) → routes
+	return chain(mux, s.recoverer, s.requestLogger, s.cors, s.requireAuth, s.rateLimit, s.auditWrites)
 }
 
 // tenant returns the authenticated tenant id; handlers call this after requireAuth.

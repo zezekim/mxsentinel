@@ -42,7 +42,25 @@ Non-2xx responses use:
 { "error": { "code": "not_found", "message": "domain not found" } }
 ```
 
-Codes: `unauthorized`, `invalid_token`, `forbidden`, `not_found`, `inspect_failed`, `internal`.
+Codes: `unauthorized`, `invalid_token`, `forbidden`, `not_found`, `inspect_failed`,
+`rate_limited`, `internal`.
+
+## Rate limiting
+
+Requests are rate-limited **per tenant** (fixed window, default 600/min — `apid
+--rate-limit`, `0` disables). Over-limit requests get **429** with a `Retry-After` header
+and `{"error":{"code":"rate_limited",...}}`. The counter is Redis-backed when available
+(shared across `apid` instances) and falls back to in-process.
+
+## Audit log
+
+Every mutating request (`POST`/`PUT`/`PATCH`/`DELETE`) is recorded — tenant, credential,
+method, path, status — and exposed at `GET /v1/audit` (read scope):
+```json
+{ "audit_events": [ { "id": "uuid", "credential_id": "uuid"|null,
+                      "method": "POST", "path": "/v1/incidents/<id>/resolve",
+                      "status": 200, "created_at": "..." } ] }
+```
 
 ## Endpoints
 
