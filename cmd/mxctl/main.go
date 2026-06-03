@@ -236,7 +236,52 @@ func userCmd(load func() (config.Config, error)) *cobra.Command {
 	create.Flags().StringVar(&password, "password", "", "user password")
 	create.Flags().StringVar(&role, "role", "owner", "role: owner|admin|operator|viewer")
 
-	c.AddCommand(create)
+	var pwTenant, pwEmail, pwPassword string
+	setPassword := &cobra.Command{
+		Use:   "set-password",
+		Short: "Reset a user's password (e.g. a locked-out owner)",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if pwTenant == "" || pwEmail == "" || pwPassword == "" {
+				return fmt.Errorf("--tenant, --email, and --password are required")
+			}
+			if len(pwPassword) < 8 {
+				return fmt.Errorf("--password must be at least 8 characters")
+			}
+			cfg, err := load()
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			pg, err := pgstore.New(ctx, cfg.Postgres)
+			if err != nil {
+				return err
+			}
+			defer pg.Close()
+
+			tenant, err := pg.GetTenantBySlug(ctx, pwTenant)
+			if err != nil {
+				return err
+			}
+			hash, err := auth.HashPassword(pwPassword)
+			if err != nil {
+				return err
+			}
+			found, err := pg.UpdateUserPasswordByEmail(ctx, tenant.ID, pwEmail, hash)
+			if err != nil {
+				return err
+			}
+			if !found {
+				return fmt.Errorf("no user %q in tenant %s", pwEmail, pwTenant)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "password updated for %s in tenant %s\n", pwEmail, pwTenant)
+			return nil
+		},
+	}
+	setPassword.Flags().StringVar(&pwTenant, "tenant", "", "tenant slug (e.g. demo)")
+	setPassword.Flags().StringVar(&pwEmail, "email", "", "user email")
+	setPassword.Flags().StringVar(&pwPassword, "password", "", "new password (min 8 chars)")
+
+	c.AddCommand(create, setPassword)
 	return c
 }
 

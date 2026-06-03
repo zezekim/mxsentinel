@@ -12,6 +12,8 @@ const EMPTY: MailSettings = {
   dmarc_ruf: "",
   relay_host: "",
   relay_port: 587,
+  resolver_address: "",
+  resolver_timeout_secs: 5,
 };
 
 const DMARC_POLICIES: DMARCPolicy[] = ["none", "quarantine", "reject"];
@@ -167,6 +169,35 @@ export default function SettingsPage() {
                 max={65535}
                 value={form.relay_port}
                 onChange={(e) => set("relay_port", Number(e.target.value))}
+              />
+            </div>
+          </fieldset>
+
+          <fieldset className="settings-group">
+            <legend>DNS resolver</legend>
+            <div className="field">
+              <label htmlFor="resolver_address">Resolver address</label>
+              <input
+                id="resolver_address"
+                type="text"
+                placeholder="system default (e.g. 1.1.1.1 or 9.9.9.9:53)"
+                value={form.resolver_address}
+                onChange={(e) => set("resolver_address", e.target.value)}
+              />
+              <span className="field-hint">
+                DNS server used to validate SPF/DKIM/DMARC. Leave blank to use the host&apos;s
+                system resolver. Bare IP/host gets port 53.
+              </span>
+            </div>
+            <div className="field">
+              <label htmlFor="resolver_timeout_secs">Lookup timeout (seconds)</label>
+              <input
+                id="resolver_timeout_secs"
+                type="number"
+                min={1}
+                max={60}
+                value={form.resolver_timeout_secs}
+                onChange={(e) => set("resolver_timeout_secs", Number(e.target.value))}
               />
             </div>
           </fieldset>

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"strings"
 
@@ -11,9 +12,10 @@ import (
 // Defaults applied for unset mail settings, so the dashboard and generated guidance show
 // sensible values out of the box.
 const (
-	defaultDKIMSelector = "mxs"
-	defaultDMARCPolicy  = "none"
-	defaultRelayPort    = 587
+	defaultDKIMSelector    = "mxs"
+	defaultDMARCPolicy     = "none"
+	defaultRelayPort       = 587
+	defaultResolverTimeout = 5
 )
 
 type mailSettingsJSON struct {
@@ -24,6 +26,9 @@ type mailSettingsJSON struct {
 	DMARCRuf     string `json:"dmarc_ruf"`
 	RelayHost    string `json:"relay_host"`
 	RelayPort    int    `json:"relay_port"`
+
+	ResolverAddress     string `json:"resolver_address"`
+	ResolverTimeoutSecs int    `json:"resolver_timeout_secs"`
 }
 
 func toMailSettingsJSON(m pgstore.MailSettings) mailSettingsJSON {
@@ -36,6 +41,9 @@ func toMailSettingsJSON(m pgstore.MailSettings) mailSettingsJSON {
 	}
 	if out.RelayPort == 0 {
 		out.RelayPort = defaultRelayPort
+	}
+	if out.ResolverTimeoutSecs == 0 {
+		out.ResolverTimeoutSecs = defaultResolverTimeout
 	}
 	return out
 }
@@ -53,6 +61,30 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 
 var validDMARCPolicies = map[string]bool{"none": true, "quarantine": true, "reject": true}
 
+// validResolverAddress accepts "" (system resolver), a bare IP/host, or host:port. It
+// rejects whitespace and obviously malformed values; bad DNS servers still surface as
+// lookup errors at recheck time.
+func validResolverAddress(addr string) bool {
+	if addr == "" {
+		return true
+	}
+	if strings.ContainsAny(addr, " \t\r\n") {
+		return false
+	}
+	host := addr
+	if h, _, err := net.SplitHostPort(addr); err == nil {
+		host = h
+	}
+	if host == "" {
+		return false
+	}
+	if net.ParseIP(host) != nil {
+		return true
+	}
+	// Otherwise treat it as a hostname: at least one dot and no path separators.
+	return !strings.ContainsAny(host, "/\\") && strings.Contains(host, ".")
+}
+
 // handleUpdateSettings replaces the tenant's mail settings (admin scope).
 func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	var req mailSettingsJSON
@@ -66,6 +98,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	req.DMARCRua = strings.TrimSpace(req.DMARCRua)
 	req.DMARCRuf = strings.TrimSpace(req.DMARCRuf)
 	req.RelayHost = strings.TrimSpace(req.RelayHost)
+	req.ResolverAddress = strings.TrimSpace(req.ResolverAddress)
 
 	if req.DMARCPolicy != "" && !validDMARCPolicies[req.DMARCPolicy] {
 		writeError(w, http.StatusBadRequest, "bad_request", "dmarc_policy must be none, quarantine, or reject")
@@ -73,6 +106,14 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.RelayPort != 0 && (req.RelayPort < 1 || req.RelayPort > 65535) {
 		writeError(w, http.StatusBadRequest, "bad_request", "relay_port must be between 1 and 65535")
+		return
+	}
+	if !validResolverAddress(req.ResolverAddress) {
+		writeError(w, http.StatusBadRequest, "bad_request", "resolver_address must be an IP or host, optionally with :port (e.g. 1.1.1.1 or 9.9.9.9:53)")
+		return
+	}
+	if req.ResolverTimeoutSecs != 0 && (req.ResolverTimeoutSecs < 1 || req.ResolverTimeoutSecs > 60) {
+		writeError(w, http.StatusBadRequest, "bad_request", "resolver_timeout_secs must be between 1 and 60")
 		return
 	}
 
