@@ -45,6 +45,9 @@ Bootstrap a user with `mxctl user create --tenant <slug> --email … --password 
   `{ "token": "mxs_sess_…", "expires_at": "...", "user": { "id","email","tenant_id","role" } }`;
   **401** on bad credentials.
 - **`POST /v1/auth/logout`** — revokes the caller's session → `{ "ok": true }`.
+- **`POST /v1/me/password`** — change your own password (session callers only, not API
+  tokens): `{ "current_password", "new_password" }` → `{ "ok": true }`. **403** if the
+  current password is wrong; **400** if `new_password` < 8 chars.
 - **`GET /v1/users`** (admin) — list tenant users.
 - **`POST /v1/users`** (admin) — `{ "email","password","role" }` → **201** `{ "id", "email", "role" }`.
 

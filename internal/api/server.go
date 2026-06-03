@@ -40,6 +40,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	// Reads require the "read" scope; mutations require "write" (admin satisfies both).
 	mux.HandleFunc("GET /v1/me", s.requireScope(ScopeRead, s.handleMe))
+	mux.HandleFunc("POST /v1/me/password", s.handleChangePassword)
 	mux.HandleFunc("GET /v1/domains", s.requireScope(ScopeRead, s.handleListDomains))
 	mux.HandleFunc("GET /v1/domains/{id}/health", s.requireScope(ScopeRead, s.handleDomainHealth))
 	mux.HandleFunc("GET /v1/domains/{id}/dns/snapshots", s.requireScope(ScopeRead, s.handleSnapshots))
