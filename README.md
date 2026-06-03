@@ -146,6 +146,11 @@ for running Postfix on the same box). To point a sending system (cPanel/Exim/Pos
 at the relay — creating SMTP submission users and the DNS to publish — see
 [`docs/smarthost.md`](docs/smarthost.md).
 
+The installer puts a host **`mxctl`** on your PATH that wraps the deployed stack:
+`mxctl restart` / `mxctl logs -f` / `mxctl ps` act on the Compose stack, while everything
+else runs in the apid container — e.g. `mxctl user set-password --tenant <slug> --email
+<you> --password <pw>` (reset a locked-out owner) or `mxctl smtp-user create …`.
+
 ---
 
 ## Getting oriented (for a new contributor or session)

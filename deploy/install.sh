@@ -463,11 +463,20 @@ else
 fi
 
 # ---- summary + DNS records to publish --------------------------------------
+# Put a host-side `mxctl` on PATH (wraps docker compose: restart/logs/ps act on the stack,
+# everything else runs in the apid container).
+if ln -sf "$REPO_ROOT/deploy/mxctl" /usr/local/bin/mxctl 2>/dev/null; then
+	MXCTL_HINT="mxctl"
+else
+	MXCTL_HINT="$REPO_ROOT/deploy/mxctl"
+fi
+
 bold "Done ✓"
 info "Dashboard:  https://${MXS_DOMAIN:-$DOMAIN}/login"
 [ "${OWNER_PW_GENERATED:-0}" -eq 1 ] && info "Owner password (SAVE THIS NOW): $OWNER_PASSWORD"
 info "Config/secrets: $ENV_FILE (private; never commit)"
-info "Logs: docker compose -f $BASE -f $PROD --env-file $ENV_FILE ${PROFILES[*]} logs -f apid aid"
+info "CLI: $MXCTL_HINT restart | logs | ps | user set-password … | smtp-user create …"
+info "Logs: $MXCTL_HINT logs -f apid aid"
 info "Caddy issues TLS automatically once $DOMAIN resolves here and 80/443 are open."
 
 if [ "${RELAY:-0}" -eq 1 ] && [ "$APP_ONLY" -eq 0 ] && [ "$REUSE_ENV" -eq 0 ]; then
