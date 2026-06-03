@@ -109,8 +109,12 @@ run-apid: ## Run the REST API server on :8080
 apikey: ## Create a read+write API token for the demo tenant (printed once)
 	go run ./cmd/mxctl apikey create --tenant demo --scopes read,write
 
+.PHONY: user
+user: ## Create a demo owner login (EMAIL=you@example.com PASSWORD=secret)
+	go run ./cmd/mxctl user create --tenant demo --email $(or $(EMAIL),admin@demo.test) --password $(or $(PASSWORD),changeme) --role owner
+
 .PHONY: web-dev
-web-dev: ## Run the Next.js dashboard dev server (needs NEXT_PUBLIC_API_TOKEN)
+web-dev: ## Run the Next.js dashboard dev server (log in at /login, or set NEXT_PUBLIC_API_TOKEN)
 	cd web && npm install && npm run dev
 
 .PHONY: bootstrap

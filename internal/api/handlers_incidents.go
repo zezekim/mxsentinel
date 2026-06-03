@@ -30,8 +30,9 @@ type incidentJSON struct {
 // handleListIncidents lists a tenant's incidents (filterable by status/domain).
 func (s *Server) handleListIncidents(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	rows, err := s.pg.ListIncidents(r.Context(), s.tenant(r), q.Get("status"), q.Get("domain"),
-		parseIntParam(r, "limit", 50, 500))
+	limit := parseIntParam(r, "limit", 50, 500)
+	offset := parseIntParam(r, "offset", 0, 1_000_000)
+	rows, err := s.pg.ListIncidents(r.Context(), s.tenant(r), q.Get("status"), q.Get("domain"), limit, offset)
 	if err != nil {
 		s.log.Error("list incidents", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal", "failed to list incidents")
@@ -57,7 +58,10 @@ func (s *Server) handleListIncidents(w http.ResponseWriter, r *http.Request) {
 			AISummary: i.AISummary, AIRemediation: i.AIRemediation, AIModel: i.AIModel, AIAnalyzedAt: analyzed,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"incidents": items})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"incidents": items, "count": len(items),
+		"limit": limit, "offset": offset,
+	})
 }
 
 // handleResolveIncident marks an incident resolved.

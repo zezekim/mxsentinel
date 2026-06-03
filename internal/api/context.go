@@ -2,10 +2,13 @@ package api
 
 import "context"
 
-// AuthInfo is the authenticated caller resolved from the API token.
+// AuthInfo is the authenticated caller, resolved from either an API token or a user
+// session token. UserID/Role are set only for session (user-login) auth.
 type AuthInfo struct {
 	TenantID string
 	CredID   string
+	UserID   string
+	Role     string
 	Scopes   []string
 }
 

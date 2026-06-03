@@ -97,13 +97,17 @@ RETURNING id`
 }
 
 // ListIncidents returns a tenant's incidents newest-first. status and domain filters
-// are optional ("" = no filter). limit defaults to 50 (<=0), capped at 500.
-func (s *Store) ListIncidents(ctx context.Context, tenantID, status, domain string, limit int) ([]Incident, error) {
+// are optional ("" = no filter). limit defaults to 50 (<=0), capped at 500; offset
+// paginates.
+func (s *Store) ListIncidents(ctx context.Context, tenantID, status, domain string, limit, offset int) ([]Incident, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	if limit > 500 {
 		limit = 500
+	}
+	if offset < 0 {
+		offset = 0
 	}
 
 	args := []any{tenantID}
@@ -120,6 +124,8 @@ func (s *Store) ListIncidents(ctx context.Context, tenantID, status, domain stri
 
 	args = append(args, limit)
 	q += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d", len(args))
+	args = append(args, offset)
+	q += fmt.Sprintf(" OFFSET $%d", len(args))
 
 	rows, err := s.Pool.Query(ctx, q, args...)
 	if err != nil {

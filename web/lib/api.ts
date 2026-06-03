@@ -1,12 +1,45 @@
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8080";
-const API_TOKEN = process.env.NEXT_PUBLIC_API_TOKEN ?? "";
+
+// ─── Token helpers ────────────────────────────────────────────────────────────
+
+export function getToken(): string {
+  if (typeof window !== "undefined") {
+    const stored = localStorage.getItem("mxs_token");
+    if (stored) return stored;
+  }
+  return process.env.NEXT_PUBLIC_API_TOKEN ?? "";
+}
+
+export function setToken(t: string): void {
+  if (typeof window !== "undefined") {
+    localStorage.setItem("mxs_token", t);
+  }
+}
+
+export function clearToken(): void {
+  if (typeof window !== "undefined") {
+    localStorage.removeItem("mxs_token");
+  }
+}
 
 function authHeaders(): HeadersInit {
-  return API_TOKEN ? { Authorization: `Bearer ${API_TOKEN}` } : {};
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function handle401(): void {
+  clearToken();
+  if (typeof window !== "undefined") {
+    window.location.href = "/login";
+  }
 }
 
 async function handleResponse<T>(res: Response): Promise<T> {
+  if (res.status === 401) {
+    handle401();
+    throw new Error("Session expired. Please log in again.");
+  }
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
     try {
@@ -28,13 +61,78 @@ export async function apiGet<T>(path: string): Promise<T> {
   return handleResponse<T>(res);
 }
 
-export async function apiPost<T>(path: string): Promise<T> {
+export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = {
+    ...(authHeaders() as Record<string, string>),
+  };
+  if (body !== undefined) {
+    headers["Content-Type"] = "application/json";
+  }
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
-    headers: authHeaders(),
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
     cache: "no-store",
   });
   return handleResponse<T>(res);
+}
+
+// ─── Auth ─────────────────────────────────────────────────────────────────────
+
+export interface LoginResponse {
+  token: string;
+  expires_at: string;
+  user: {
+    id: string;
+    email: string;
+    tenant_id: string;
+    role: string;
+  };
+}
+
+export async function login(email: string, password: string): Promise<LoginResponse> {
+  const res = await fetch(`${API_BASE}/v1/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    let msg = "Invalid credentials";
+    try {
+      const body = await res.json();
+      if (body?.error?.message) msg = body.error.message;
+    } catch {
+      // ignore parse error
+    }
+    throw new Error(msg);
+  }
+  const data = (await res.json()) as LoginResponse;
+  setToken(data.token);
+  return data;
+}
+
+export async function logout(): Promise<void> {
+  try {
+    await apiPost<{ ok: boolean }>("/v1/auth/logout");
+  } catch {
+    // best-effort; clear token regardless
+  } finally {
+    clearToken();
+  }
+}
+
+// ─── Me ──────────────────────────────────────────────────────────────────────
+
+export interface Me {
+  user_id: string;
+  tenant_id: string;
+  role: string;
+  scopes: string[];
+}
+
+export function me(): Promise<Me> {
+  return apiGet<Me>("/v1/me");
 }
 
 // ─── Response types ──────────────────────────────────────────────────────────

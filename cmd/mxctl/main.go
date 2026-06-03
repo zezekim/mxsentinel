@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/zezekim/mxsentinel/internal/api"
+	"github.com/zezekim/mxsentinel/internal/auth"
 	"github.com/zezekim/mxsentinel/internal/config"
 	"github.com/zezekim/mxsentinel/internal/events"
 	"github.com/zezekim/mxsentinel/internal/obs"
@@ -54,8 +55,56 @@ func newRootCmd() *cobra.Command {
 		busCmd(loadCfg),
 		seedCmd(loadCfg),
 		apikeyCmd(loadCfg),
+		userCmd(loadCfg),
 	)
 	return root
+}
+
+func userCmd(load func() (config.Config, error)) *cobra.Command {
+	c := &cobra.Command{Use: "user", Short: "Manage users"}
+
+	var tenantSlug, email, password, role string
+	create := &cobra.Command{
+		Use:   "create",
+		Short: "Create a user that can log in to the dashboard/API",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if tenantSlug == "" || email == "" || password == "" {
+				return fmt.Errorf("--tenant, --email, and --password are required")
+			}
+			cfg, err := load()
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			pg, err := pgstore.New(ctx, cfg.Postgres)
+			if err != nil {
+				return err
+			}
+			defer pg.Close()
+
+			tenant, err := pg.GetTenantBySlug(ctx, tenantSlug)
+			if err != nil {
+				return err
+			}
+			hash, err := auth.HashPassword(password)
+			if err != nil {
+				return err
+			}
+			id, err := pg.CreateUser(ctx, tenant.ID, email, hash, role)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "created user %s (%s, role %s) in tenant %s\n", id, email, role, tenantSlug)
+			return nil
+		},
+	}
+	create.Flags().StringVar(&tenantSlug, "tenant", "", "tenant slug (e.g. demo)")
+	create.Flags().StringVar(&email, "email", "", "user email")
+	create.Flags().StringVar(&password, "password", "", "user password")
+	create.Flags().StringVar(&role, "role", "owner", "role: owner|admin|operator|viewer")
+
+	c.AddCommand(create)
+	return c
 }
 
 func apikeyCmd(load func() (config.Config, error)) *cobra.Command {

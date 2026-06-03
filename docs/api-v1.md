@@ -29,10 +29,29 @@ Tokens carry scopes; endpoints are gated by them (`admin` is a superset):
 A call lacking the required scope returns **403** `{"error":{"code":"forbidden",...}}`.
 
 ### `GET /v1/me`
-Returns the authenticated caller's tenant and scopes:
+Returns the authenticated caller's tenant, scopes, and (for user sessions) role/user id:
 ```json
-{ "tenant_id": "uuid", "scopes": ["read", "write"] }
+{ "tenant_id": "uuid", "scopes": ["read", "write"], "role": "owner", "user_id": "uuid" }
 ```
+
+## User login & sessions
+
+Besides long-lived API tokens, users can log in with email + password to get a **session
+token** (prefix `mxs_sess_`, Redis-backed, 24h TTL). A session's scopes derive from the
+user's role: `owner`/`admin` → read+write+admin, `operator` → read+write, `viewer` → read.
+Bootstrap a user with `mxctl user create --tenant <slug> --email … --password … --role …`.
+
+- **`POST /v1/auth/login`** (public) — `{ "email", "password" }` →
+  `{ "token": "mxs_sess_…", "expires_at": "...", "user": { "id","email","tenant_id","role" } }`;
+  **401** on bad credentials.
+- **`POST /v1/auth/logout`** — revokes the caller's session → `{ "ok": true }`.
+- **`GET /v1/users`** (admin) — list tenant users.
+- **`POST /v1/users`** (admin) — `{ "email","password","role" }` → **201** `{ "id", "email", "role" }`.
+
+## Pagination
+
+`GET /v1/messages` and `GET /v1/incidents` accept `?limit=&offset=`; responses echo the
+applied `limit`/`offset` and a `count`.
 
 ## Errors
 

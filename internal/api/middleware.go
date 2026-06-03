@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/zezekim/mxsentinel/internal/auth"
 )
 
 // chain applies middleware in order (first listed runs outermost).
@@ -62,6 +64,32 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "missing bearer token")
 			return
 		}
+
+		// User session token (from login) — scopes derive from the user's role.
+		if strings.HasPrefix(token, auth.SessionPrefix) {
+			if s.sessions == nil {
+				writeError(w, http.StatusUnauthorized, "invalid_token", "sessions not enabled")
+				return
+			}
+			sess, found, err := s.sessions.Resolve(r.Context(), token)
+			if err != nil {
+				s.log.Error("session lookup failed", "err", err)
+				writeError(w, http.StatusInternalServerError, "internal", "auth lookup failed")
+				return
+			}
+			if !found {
+				writeError(w, http.StatusUnauthorized, "invalid_token", "invalid or expired session")
+				return
+			}
+			ctx := withAuth(r.Context(), AuthInfo{
+				TenantID: sess.TenantID, UserID: sess.UserID, Role: sess.Role,
+				Scopes: auth.ScopesForRole(sess.Role),
+			})
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
+
+		// Otherwise an API credential token.
 		prefix := PrefixOf(token)
 		if prefix == "" {
 			writeError(w, http.StatusUnauthorized, "invalid_token", "malformed token")

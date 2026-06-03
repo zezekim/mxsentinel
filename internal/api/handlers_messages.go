@@ -35,6 +35,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		Provider:  q.Get("provider"),
 		Outcome:   q.Get("outcome"),
 		Limit:     parseIntParam(r, "limit", 100, 1000),
+		Offset:    parseIntParam(r, "offset", 0, 1_000_000),
 	}
 	if v := q.Get("since"); v != "" {
 		if t, err := time.Parse(time.RFC3339, v); err == nil {
@@ -64,5 +65,8 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			EnhancedStatus: m.EnhancedStatus, BounceClass: m.BounceClass, ResponseText: m.ResponseText,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"messages": msgs, "count": len(msgs)})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"messages": msgs, "count": len(msgs),
+		"limit": f.Limit, "offset": f.Offset,
+	})
 }

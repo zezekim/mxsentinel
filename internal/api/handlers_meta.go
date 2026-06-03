@@ -17,5 +17,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"tenant_id": a.TenantID,
 		"scopes":    scopes,
+		"user_id":   a.UserID,
+		"role":      a.Role,
 	})
 }

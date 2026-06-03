@@ -18,6 +18,7 @@ type MessageFilter struct {
 	Since     time.Time
 	Until     time.Time
 	Limit     int
+	Offset    int
 }
 
 // MessageRow is one result row from QueryMessages.
@@ -83,6 +84,10 @@ func (s *Store) QueryMessages(ctx context.Context, f MessageFilter) ([]MessageRo
 
 	sb.WriteString(" ORDER BY event_time DESC LIMIT ?")
 	args = append(args, limit)
+	if f.Offset > 0 {
+		sb.WriteString(" OFFSET ?")
+		args = append(args, f.Offset)
+	}
 
 	rows, err := s.conn.Query(ctx, sb.String(), args...)
 	if err != nil {
