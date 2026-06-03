@@ -383,6 +383,8 @@ export interface MailSettings {
   dmarc_ruf: string;
   relay_host: string;
   relay_port: number;
+  resolver_address: string;
+  resolver_timeout_secs: number;
 }
 
 export interface SettingsResponse {

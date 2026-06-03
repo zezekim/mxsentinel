@@ -161,7 +161,13 @@ func (s *Server) handleRecheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	snap, err := dnsx.Inspect(r.Context(), s.resolver, dh.Name, dnsx.Options{})
+	// Honor the tenant's configured DNS resolver (Settings); fall back to the default.
+	resolver := s.resolver
+	if ms, mErr := s.pg.GetMailSettings(r.Context(), tenant); mErr == nil && ms.ResolverAddress != "" {
+		resolver = dnsx.ResolverFor(ms.ResolverAddress, ms.ResolverTimeoutSecs)
+	}
+
+	snap, err := dnsx.Inspect(r.Context(), resolver, dh.Name, dnsx.Options{})
 	if err != nil {
 		s.log.Error("inspect", "domain", dh.Name, "err", err)
 		writeError(w, http.StatusInternalServerError, "inspect_failed", "DNS inspection failed")

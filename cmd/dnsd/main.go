@@ -104,24 +104,42 @@ func (w *worker) pollAll(ctx context.Context) {
 		w.log.Error("list domains failed", "err", err)
 		return
 	}
+	resolvers := map[string]dnsx.Resolver{} // tenant -> resolver, cached for this cycle
 	for _, d := range domains {
 		if ctx.Err() != nil {
 			return
 		}
 		// small jitter to avoid hammering resolvers in lockstep
 		time.Sleep(time.Duration(rand.IntN(250)) * time.Millisecond)
-		w.poll(ctx, d)
+		w.poll(ctx, d, w.resolverForTenant(ctx, d.TenantID, resolvers))
 	}
 }
 
-func (w *worker) poll(ctx context.Context, d pgstore.MonitoredDomain) {
+// resolverForTenant returns the resolver configured in a tenant's Settings, caching it
+// for the current poll cycle. Falls back to the default resolver on error or when no
+// custom resolver is set, so a settings hiccup never stops DNS polling.
+func (w *worker) resolverForTenant(ctx context.Context, tenantID string, cache map[string]dnsx.Resolver) dnsx.Resolver {
+	if r, ok := cache[tenantID]; ok {
+		return r
+	}
+	r := w.resolver
+	if ms, err := w.pg.GetMailSettings(ctx, tenantID); err != nil {
+		w.log.Warn("read resolver settings failed; using default", "tenant", tenantID, "err", err)
+	} else if ms.ResolverAddress != "" {
+		r = dnsx.ResolverFor(ms.ResolverAddress, ms.ResolverTimeoutSecs)
+	}
+	cache[tenantID] = r
+	return r
+}
+
+func (w *worker) poll(ctx context.Context, d pgstore.MonitoredDomain, resolver dnsx.Resolver) {
 	prior, err := w.pg.LatestSnapshotChecksum(ctx, d.ID)
 	if err != nil {
 		w.log.Error("read prior checksum", "domain", d.Name, "err", err)
 		return
 	}
 
-	snap, err := dnsx.Inspect(ctx, w.resolver, d.Name, dnsx.Options{})
+	snap, err := dnsx.Inspect(ctx, resolver, d.Name, dnsx.Options{})
 	if err != nil {
 		w.log.Error("inspect failed", "domain", d.Name, "err", err)
 		return
