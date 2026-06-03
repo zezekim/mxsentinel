@@ -56,6 +56,7 @@ func newRootCmd() *cobra.Command {
 		seedCmd(loadCfg),
 		apikeyCmd(loadCfg),
 		userCmd(loadCfg),
+		smtpUserCmd(loadCfg),
 		ipPoolCmd(loadCfg),
 		relayNodeCmd(loadCfg),
 		tenantCmd(loadCfg),
@@ -236,6 +237,132 @@ func userCmd(load func() (config.Config, error)) *cobra.Command {
 	create.Flags().StringVar(&role, "role", "owner", "role: owner|admin|operator|viewer")
 
 	c.AddCommand(create)
+	return c
+}
+
+func smtpUserCmd(load func() (config.Config, error)) *cobra.Command {
+	c := &cobra.Command{Use: "smtp-user", Short: "Manage SMTP submission users (relay SASL auth)"}
+
+	withStore := func(cmd *cobra.Command) (*pgstore.Store, context.Context, error) {
+		cfg, err := load()
+		if err != nil {
+			return nil, nil, err
+		}
+		ctx := cmd.Context()
+		pg, err := pgstore.New(ctx, cfg.Postgres)
+		if err != nil {
+			return nil, nil, err
+		}
+		return pg, ctx, nil
+	}
+
+	var tenantSlug, username, password, domain string
+	create := &cobra.Command{
+		Use:   "create",
+		Short: "Create an SMTP submission credential (a smarthost client authenticates with it)",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if tenantSlug == "" || username == "" || password == "" {
+				return fmt.Errorf("--tenant, --username, and --password are required")
+			}
+			if len(password) < 8 {
+				return fmt.Errorf("--password must be at least 8 characters")
+			}
+			pg, ctx, err := withStore(cmd)
+			if err != nil {
+				return err
+			}
+			defer pg.Close()
+			tenant, err := pg.GetTenantBySlug(ctx, tenantSlug)
+			if err != nil {
+				return err
+			}
+			hash, err := auth.HashPassword(password)
+			if err != nil {
+				return err
+			}
+			id, err := pg.CreateSMTPUser(ctx, tenant.ID, username, hash, domain)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "created smtp user %s (%s) in tenant %s\n", id, username, tenantSlug)
+			return nil
+		},
+	}
+	create.Flags().StringVar(&tenantSlug, "tenant", "", "tenant slug (e.g. demo)")
+	create.Flags().StringVar(&username, "username", "", "SASL login (e.g. mailer@send.example.com)")
+	create.Flags().StringVar(&password, "password", "", "password (min 8 chars)")
+	create.Flags().StringVar(&domain, "domain", "", "associated sending domain (optional)")
+
+	var listTenant string
+	list := &cobra.Command{
+		Use:   "list",
+		Short: "List a tenant's SMTP submission users",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if listTenant == "" {
+				return fmt.Errorf("--tenant is required")
+			}
+			pg, ctx, err := withStore(cmd)
+			if err != nil {
+				return err
+			}
+			defer pg.Close()
+			tenant, err := pg.GetTenantBySlug(ctx, listTenant)
+			if err != nil {
+				return err
+			}
+			users, err := pg.ListSMTPUsers(ctx, tenant.ID)
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			if len(users) == 0 {
+				fmt.Fprintln(out, "no smtp users")
+				return nil
+			}
+			for _, u := range users {
+				state := "enabled"
+				if !u.Enabled {
+					state = "disabled"
+				}
+				fmt.Fprintf(out, "%s\t%s\t%s\n", u.Username, state, u.Domain)
+			}
+			return nil
+		},
+	}
+	list.Flags().StringVar(&listTenant, "tenant", "", "tenant slug")
+
+	var delTenant, delUsername string
+	del := &cobra.Command{
+		Use:   "delete",
+		Short: "Delete an SMTP submission user by username",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if delTenant == "" || delUsername == "" {
+				return fmt.Errorf("--tenant and --username are required")
+			}
+			pg, ctx, err := withStore(cmd)
+			if err != nil {
+				return err
+			}
+			defer pg.Close()
+			tenant, err := pg.GetTenantBySlug(ctx, delTenant)
+			if err != nil {
+				return err
+			}
+			found, err := pg.DeleteSMTPUserByUsername(ctx, tenant.ID, delUsername)
+			if err != nil {
+				return err
+			}
+			if !found {
+				return fmt.Errorf("no smtp user %q in tenant %s", delUsername, delTenant)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "deleted smtp user %s\n", delUsername)
+			return nil
+		},
+	}
+	del.Flags().StringVar(&delTenant, "tenant", "", "tenant slug")
+	del.Flags().StringVar(&delUsername, "username", "", "SASL login to delete")
+
+	c.AddCommand(create, list, del)
 	return c
 }
 

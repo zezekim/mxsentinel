@@ -248,6 +248,73 @@ EOF
 	info "Postfix + OpenDKIM configured (signing $MAIL_DOMAIN, selector $DKIM_SELECTOR)"
 }
 
+provision_dovecot() {
+	# Dovecot acts purely as Postfix's SASL provider (no IMAP/POP). It authenticates SMTP
+	# submission clients against the smtp_users table in Postgres, so credentials created
+	# in the dashboard (SMTP Users) or via `mxctl smtp-user create` work immediately.
+	bold "Installing Dovecot (SASL passdb for SMTP submission users)…"
+	apt_install dovecot-core dovecot-pgsql
+
+	cp -n /etc/dovecot/dovecot.conf "/etc/dovecot/dovecot.conf.bak.$(date +%s)" 2>/dev/null || true
+	cat > /etc/dovecot/dovecot.conf <<'EOF'
+# Managed by mxsentinel deploy/install.sh — SMTP submission SASL only (no IMAP/POP).
+# Postfix uses this as its SASL backend; passwords live in Postgres (smtp_users).
+protocols =
+auth_mechanisms = plain login
+disable_plaintext_auth = no
+log_path = /var/log/dovecot.log
+
+passdb {
+  driver = sql
+  args = /etc/dovecot/dovecot-sql.conf.ext
+}
+userdb {
+  driver = static
+  args = uid=nobody gid=nogroup home=/nonexistent allow_all_users=yes
+}
+
+# Auth socket Postfix reads (smtpd_sasl_type=dovecot, smtpd_sasl_path=private/auth).
+service auth {
+  unix_listener /var/spool/postfix/private/auth {
+    mode = 0660
+    user = postfix
+    group = postfix
+  }
+}
+EOF
+
+	# Postgres-backed password lookup. The relay connects to the Postgres container
+	# published on 127.0.0.1:5432 (see deploy/docker-compose.yml). default_pass_scheme
+	# BLF-CRYPT verifies the bcrypt hashes the API/mxctl write.
+	cat > /etc/dovecot/dovecot-sql.conf.ext <<EOF
+driver = pgsql
+connect = host=127.0.0.1 port=5432 dbname=${PG_DB:-mxsentinel} user=${PG_USER:-mxsentinel} password=${PG_PASSWORD:-}
+default_pass_scheme = BLF-CRYPT
+password_query = SELECT username AS "user", password_hash AS password FROM smtp_users WHERE username = '%u' AND enabled = TRUE
+EOF
+	chmod 600 /etc/dovecot/dovecot-sql.conf.ext
+	systemctl enable dovecot >/dev/null 2>&1 || true
+	systemctl restart dovecot || warn "dovecot restart failed — check 'journalctl -u dovecot'"
+
+	# Postfix submission service (587): offer AUTH (via Dovecot) only over TLS, and relay
+	# only for authenticated senders. Port 25 stays trusted-network only (no SASL).
+	postconf -e \
+		"smtpd_sasl_type = dovecot" \
+		"smtpd_sasl_path = private/auth" \
+		"smtpd_tls_auth_only = yes"
+	postconf -M "submission/inet=submission inet n - y - - smtpd"
+	postconf -P \
+		"submission/inet/syslog_name=postfix/submission" \
+		"submission/inet/smtpd_tls_security_level=may" \
+		"submission/inet/smtpd_sasl_auth_enable=yes" \
+		"submission/inet/smtpd_client_restrictions=permit_sasl_authenticated,reject" \
+		"submission/inet/smtpd_relay_restrictions=permit_sasl_authenticated,reject" \
+		"submission/inet/smtpd_recipient_restrictions=permit_sasl_authenticated,reject"
+	systemctl restart postfix
+	info "Dovecot SASL configured; Postfix submission (587) authenticates SMTP users from Postgres"
+	info "Submission uses the default (snakeoil) TLS cert — install a real cert for production (see docs/smarthost.md)"
+}
+
 provision_firewall() {
 	have ufw || return 0
 	bold "Configuring firewall (ufw)…"
@@ -269,6 +336,7 @@ if [ "$APP_ONLY" -eq 0 ] && [ "$REUSE_ENV" -eq 0 ]; then
 	provision_docker
 	{ [ "${AI_LOCAL:-0}" -eq 1 ] && [ -n "${AI_MODEL:-}" ]; } && provision_ollama
 	[ "${RELAY:-0}" -eq 1 ] && provision_postfix
+	[ "${RELAY:-0}" -eq 1 ] && provision_dovecot
 	provision_firewall
 else
 	have docker || die "Docker is required (run without --app-only on a fresh box to auto-install it)"
@@ -321,6 +389,18 @@ if [ "$REUSE_ENV" -eq 0 ]; then
 			ask POOL_ADDRS "Pool IPs (comma-separated)"
 			[ -n "$POOL_ADDRS" ] && { mxctl ip-pool create --tenant "$TENANT_SLUG" --name "$POOL_NAME" --purpose "$POOL_PURPOSE" --addresses "$POOL_ADDRS" || warn "ip-pool create failed"; }
 		fi
+		if yesno "Create an SMTP submission user now (so a smarthost can authenticate)?" n; then
+			ask SMTP_USER_NAME "SMTP username" "mailer@$MAIL_DOMAIN"
+			ask_secret SMTP_USER_PW "SMTP password (blank = auto-generate)"
+			SMTP_PW_GENERATED=0
+			if [ -z "$SMTP_USER_PW" ]; then SMTP_USER_PW="$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | cut -c1-20)"; SMTP_PW_GENERATED=1; fi
+			if [ -n "$SMTP_USER_NAME" ] && mxctl smtp-user create --tenant "$TENANT_SLUG" --username "$SMTP_USER_NAME" --password "$SMTP_USER_PW" --domain "$MAIL_DOMAIN" >/dev/null 2>&1; then
+				info "smtp user '$SMTP_USER_NAME' created"
+				[ "$SMTP_PW_GENERATED" -eq 1 ] && info "SMTP password (SAVE THIS NOW): $SMTP_USER_PW"
+			else
+				warn "smtp-user create failed (username may already exist) — add one later in the dashboard (SMTP Users)"
+			fi
+		fi
 	fi
 else
 	# Reused .env: credentials aren't stored, so we can't bootstrap. If you don't yet
@@ -350,5 +430,8 @@ if [ "${RELAY:-0}" -eq 1 ] && [ "$APP_ONLY" -eq 0 ] && [ "$REUSE_ENV" -eq 0 ]; t
 	echo
 	cat "/etc/opendkim/keys/$MAIL_DOMAIN/$DKIM_SELECTOR.txt" 2>/dev/null || warn "DKIM record file not found"
 	echo
-	info "Multi-IP sender pools, SASL submission auth, and warmup: see docs/deploy-relay.md."
+	info "Smarthost submission endpoint: $DOMAIN:587 (STARTTLS, AUTH PLAIN/LOGIN)."
+	info "Manage SMTP submission users in the dashboard (SMTP Users) or: mxctl smtp-user create …"
+	info "Smarthost client setup (cPanel/Exim/Postfix/apps): see docs/smarthost.md."
+	info "Multi-IP sender pools and warmup: see docs/deploy-relay.md."
 fi

@@ -10,6 +10,8 @@ const links = [
   { href: "/messages", label: "Messages" },
   { href: "/dmarc", label: "DMARC" },
   { href: "/incidents", label: "Incidents" },
+  { href: "/smtp-users", label: "SMTP Users" },
+  { href: "/settings", label: "Settings" },
 ];
 
 export default function NavLinks() {
