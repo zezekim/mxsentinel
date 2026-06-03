@@ -28,6 +28,16 @@ type Config struct {
 	Redis       RedisConfig       `yaml:"redis"`
 	NATS        NATSConfig        `yaml:"nats"`
 	ObjectStore ObjectStoreConfig `yaml:"objectstore"`
+	AI          AIConfig          `yaml:"ai"`
+}
+
+// AIConfig points the AI reasoning layer at a local OpenAI-compatible LLM endpoint
+// (Ollama, vLLM, llama.cpp). Metadata only — never message bodies.
+type AIConfig struct {
+	Endpoint    string `yaml:"endpoint"` // base URL, e.g. http://localhost:11434/v1
+	Model       string `yaml:"model"`
+	APIKey      string `yaml:"apikey"` // optional; many local servers ignore it
+	TimeoutSecs int    `yaml:"timeoutsecs"`
 }
 
 type PostgresConfig struct {
@@ -88,6 +98,11 @@ func Defaults() Config {
 			SecretKey: "minioadmin",
 			UseSSL:    false,
 		},
+		AI: AIConfig{
+			Endpoint:    "http://localhost:11434/v1", // Ollama default
+			Model:       "llama3",
+			TimeoutSecs: 60,
+		},
 	}
 }
 
@@ -145,6 +160,13 @@ func applyEnv(c *Config) error {
 	setStr(&c.ObjectStore.AccessKey, "MXS_OBJECTSTORE_ACCESSKEY")
 	setStr(&c.ObjectStore.SecretKey, "MXS_OBJECTSTORE_SECRETKEY")
 	if err := setBool(&c.ObjectStore.UseSSL, "MXS_OBJECTSTORE_USESSL"); err != nil {
+		return err
+	}
+
+	setStr(&c.AI.Endpoint, "MXS_AI_ENDPOINT")
+	setStr(&c.AI.Model, "MXS_AI_MODEL")
+	setStr(&c.AI.APIKey, "MXS_AI_APIKEY")
+	if err := setInt(&c.AI.TimeoutSecs, "MXS_AI_TIMEOUTSECS"); err != nil {
 		return err
 	}
 	return nil

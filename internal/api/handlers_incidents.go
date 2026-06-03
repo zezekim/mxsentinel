@@ -19,6 +19,12 @@ type incidentJSON struct {
 	Confidence    *float64        `json:"confidence"`
 	CreatedAt     string          `json:"created_at"`
 	ResolvedAt    *string         `json:"resolved_at"`
+
+	// AI diagnostics (Phase 3); null until aid analyzes the incident.
+	AISummary     *string         `json:"ai_summary"`
+	AIRemediation json.RawMessage `json:"ai_remediation,omitempty"`
+	AIModel       *string         `json:"ai_model"`
+	AIAnalyzedAt  *string         `json:"ai_analyzed_at"`
 }
 
 // handleListIncidents lists a tenant's incidents (filterable by status/domain).
@@ -38,11 +44,17 @@ func (s *Server) handleListIncidents(w http.ResponseWriter, r *http.Request) {
 			ts := i.ResolvedAt.UTC().Format(time.RFC3339)
 			resolved = &ts
 		}
+		var analyzed *string
+		if i.AIAnalyzedAt != nil {
+			ts := i.AIAnalyzedAt.UTC().Format(time.RFC3339)
+			analyzed = &ts
+		}
 		items = append(items, incidentJSON{
 			ID: i.ID, SourceEventID: i.SourceEventID, Kind: i.Kind, Severity: i.Severity,
 			Domain: i.Domain, Subject: i.Subject, Title: i.Title, Detail: i.Detail,
 			Status: i.Status, Confidence: i.Confidence,
 			CreatedAt: i.CreatedAt.UTC().Format(time.RFC3339), ResolvedAt: resolved,
+			AISummary: i.AISummary, AIRemediation: i.AIRemediation, AIModel: i.AIModel, AIAnalyzedAt: analyzed,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"incidents": items})

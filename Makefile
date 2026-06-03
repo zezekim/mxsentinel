@@ -93,6 +93,10 @@ run-correld: ## Run the correlation engine (rejection spikes -> DNS-change root 
 run-repd: ## Run the reputation monitor (DNSBL checks -> reputation.blacklist_hit)
 	go run ./cmd/repd
 
+.PHONY: run-aid
+run-aid: ## Run the AI diagnostics daemon (incidents -> LLM root-cause + remediation)
+	go run ./cmd/aid
+
 .PHONY: run-incidentd
 run-incidentd: ## Run the incident recorder (reputation/DNS events -> incidents)
 	go run ./cmd/incidentd

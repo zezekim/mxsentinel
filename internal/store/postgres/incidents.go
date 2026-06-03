@@ -25,6 +25,28 @@ type Incident struct {
 	Confidence    *float64
 	CreatedAt     time.Time
 	ResolvedAt    *time.Time
+
+	// AI diagnostics enrichment (Phase 3); nil/empty until aid analyzes the incident.
+	AISummary     *string
+	AIRemediation json.RawMessage
+	AIModel       *string
+	AIAnalyzedAt  *time.Time
+}
+
+// incidentColumns is the shared SELECT list; scanIncident reads rows in this order.
+const incidentColumns = `id, tenant_id, source_event_id, kind::text, severity::text,
+	COALESCE(domain, ''), COALESCE(subject, ''), title, detail, status::text,
+	confidence, created_at, resolved_at, ai_summary, ai_remediation, ai_model, ai_analyzed_at`
+
+func scanIncident(rows pgx.Rows) (Incident, error) {
+	var inc Incident
+	err := rows.Scan(
+		&inc.ID, &inc.TenantID, &inc.SourceEventID, &inc.Kind, &inc.Severity,
+		&inc.Domain, &inc.Subject, &inc.Title, &inc.Detail, &inc.Status,
+		&inc.Confidence, &inc.CreatedAt, &inc.ResolvedAt,
+		&inc.AISummary, &inc.AIRemediation, &inc.AIModel, &inc.AIAnalyzedAt,
+	)
+	return inc, err
 }
 
 // IncidentInput carries the fields needed to create a new incident.
@@ -85,11 +107,7 @@ func (s *Store) ListIncidents(ctx context.Context, tenantID, status, domain stri
 	}
 
 	args := []any{tenantID}
-	q := `SELECT id, tenant_id, source_event_id, kind::text, severity::text,
-	             COALESCE(domain, ''), COALESCE(subject, ''), title, detail,
-	             status::text, confidence, created_at, resolved_at
-	      FROM incidents
-	      WHERE tenant_id = $1`
+	q := `SELECT ` + incidentColumns + ` FROM incidents WHERE tenant_id = $1`
 
 	if status != "" {
 		args = append(args, status)
@@ -111,27 +129,62 @@ func (s *Store) ListIncidents(ctx context.Context, tenantID, status, domain stri
 
 	var out []Incident
 	for rows.Next() {
-		var inc Incident
-		if err := rows.Scan(
-			&inc.ID,
-			&inc.TenantID,
-			&inc.SourceEventID,
-			&inc.Kind,
-			&inc.Severity,
-			&inc.Domain,
-			&inc.Subject,
-			&inc.Title,
-			&inc.Detail,
-			&inc.Status,
-			&inc.Confidence,
-			&inc.CreatedAt,
-			&inc.ResolvedAt,
-		); err != nil {
+		inc, err := scanIncident(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan incident: %w", err)
 		}
 		out = append(out, inc)
 	}
 	return out, rows.Err()
+}
+
+// ListIncidentsNeedingAI returns incidents (across all tenants) that have not yet been
+// analyzed by the AI layer, oldest first. Used by cmd/aid.
+func (s *Store) ListIncidentsNeedingAI(ctx context.Context, limit int) ([]Incident, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	q := `SELECT ` + incidentColumns + `
+	      FROM incidents WHERE ai_analyzed_at IS NULL
+	      ORDER BY created_at ASC LIMIT $1`
+	rows, err := s.Pool.Query(ctx, q, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list incidents needing ai: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Incident
+	for rows.Next() {
+		inc, err := scanIncident(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan incident: %w", err)
+		}
+		out = append(out, inc)
+	}
+	return out, rows.Err()
+}
+
+// SetIncidentAI writes the AI-generated summary, structured remediation, and model name,
+// and stamps ai_analyzed_at so the incident is not re-analyzed.
+func (s *Store) SetIncidentAI(ctx context.Context, id, summary string, remediation json.RawMessage, model string) error {
+	var rem interface{}
+	if len(remediation) > 0 {
+		rem = remediation
+	}
+	_, err := s.Pool.Exec(ctx,
+		`UPDATE incidents
+		 SET ai_summary = $2, ai_remediation = COALESCE($3, '[]')::jsonb,
+		     ai_model = $4, ai_analyzed_at = now()
+		 WHERE id = $1`,
+		id, summary, rem, model,
+	)
+	if err != nil {
+		return fmt.Errorf("set incident ai: %w", err)
+	}
+	return nil
 }
 
 // ResolveIncident marks an incident resolved. found=false if it doesn't exist for the tenant.

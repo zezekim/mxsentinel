@@ -28,6 +28,11 @@ x-app-env: &app-env
   MXS_OBJECTSTORE_BUCKET: "mxsentinel"
   MXS_OBJECTSTORE_ACCESSKEY: "minioadmin"
   MXS_OBJECTSTORE_SECRETKEY: "minioadmin"
+  # AI layer: aid expects a local LLM. There is no LLM service in this compose, so point
+  # it at one you run yourself (host-run Ollama via host.docker.internal on Docker Desktop;
+  # adjust for Linux). aid retries harmlessly until the endpoint is reachable.
+  MXS_AI_ENDPOINT: "http://host.docker.internal:11434/v1"
+  MXS_AI_MODEL: "llama3"
 
 # Shared definition for every Go service: one image (built from the root Dockerfile),
 # only started under the "app" profile.
@@ -160,6 +165,13 @@ services:
   repd:
     <<: *app
     command: ["/usr/local/bin/repd"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      nats: {condition: service_healthy}
+
+  aid:
+    <<: *app
+    command: ["/usr/local/bin/aid"]
     depends_on:
       migrate: {condition: service_completed_successfully}
       nats: {condition: service_healthy}

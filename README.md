@@ -53,8 +53,8 @@ Collect → Normalize → Correlate → Analyze → Explain → Remediate
 | Phase | Theme | Scope |
 | --- | --- | --- |
 | **1 — Foundation** *(complete)* | Get data flowing | Relay telemetry, DNS validator, DMARC ingestion, Postgres schema, dashboard MVP. |
-| **2 — Intelligence** *(current)* | Make data mean something | Correlation engine, provider analytics, rejection analysis, reputation tracking. |
-| **3 — AI Diagnostics** | Explain & recommend | Root-cause analysis, anomaly detection, remediation recommendations. |
+| **2 — Intelligence** *(complete)* | Make data mean something | Correlation engine, provider analytics, rejection analysis, reputation tracking. |
+| **3 — AI Diagnostics** *(current)* | Explain & recommend | Root-cause analysis, anomaly detection, remediation recommendations. |
 | **4 — Enterprise** | Scale & isolate | HA relay clusters, RBAC, public APIs, multi-region, tenant federation. |
 
 Phase 1 is fully specified in [`docs/phase-1-plan.md`](docs/phase-1-plan.md).
@@ -88,6 +88,13 @@ correlates each spike against recent DNS changes to produce a root-cause hypothe
 exposes `GET /v1/analytics/{deliverability,rejections}`. `cmd/repd` checks sending IPs
 against DNSBLs (`internal/reputation`) and emits `reputation.blacklist_hit`. `cmd/incidentd`
 turns those signals into queryable **incidents** (`GET /v1/incidents`).
+
+**Phase 3 (AI Diagnostics) has begun:** `cmd/aid` reads incidents that need analysis,
+asks a local OpenAI-compatible LLM (Ollama/vLLM — **metadata only, never message
+bodies**) for a root-cause narrative + structured remediation, writes those back onto the
+incident (surfaced in the `ai_*` fields of `GET /v1/incidents`), and publishes an `ai.rca`
+event. The prompt-building and response-parsing logic lives in `internal/ai`; the LLM
+endpoint/model are configured via `MXS_AI_*`.
 
 The REST API (`cmd/apid`, see [`docs/api-v1.md`](docs/api-v1.md)) makes the collected
 data queryable: domain health, DNS drift timeline, a message explorer over ClickHouse,

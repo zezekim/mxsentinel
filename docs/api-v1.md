@@ -111,8 +111,14 @@ correlation/reputation/DNS events. `status` (`open`/`acknowledged`/`resolved`) a
   "severity": "critical", "domain": "example.com", "subject": "example.com",
   "title": "DKIM selector missing after DNS change", "detail": { },
   "status": "open", "confidence": 0.85,
-  "created_at": "...", "resolved_at": null } ] }
+  "created_at": "...", "resolved_at": null,
+  "ai_summary": "Microsoft began rejecting for authentication after selector2 was removed...",
+  "ai_remediation": [ { "action": "restore_dkim_selector", "summary": "...",
+                        "target": "selector2._domainkey.example.com", "priority": "urgent" } ],
+  "ai_model": "llama3", "ai_analyzed_at": "..." } ] }
 ```
+The `ai_*` fields are populated asynchronously by `cmd/aid` (Phase 3) from a local LLM;
+they are `null` until an incident has been analyzed.
 
 ### `POST /v1/incidents/{id}/resolve`
 Marks an incident resolved → `{ "resolved": true }` (404 if not found for the tenant).

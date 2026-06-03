@@ -32,3 +32,11 @@ objectstore:
   accesskey: "minioadmin"
   secretkey: "minioadmin"
   usessl: false
+
+# AI reasoning layer (Phase 3): a local, OpenAI-compatible LLM (Ollama/vLLM/llama.cpp).
+# Metadata only — never message bodies.
+ai:
+  endpoint: "http://localhost:11434/v1"   # Ollama default
+  model: "llama3"
+  apikey: ""
+  timeoutsecs: 60
