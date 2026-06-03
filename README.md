@@ -127,11 +127,20 @@ the compose `app` profile (a one-shot `migrate` service applies migrations first
 `telemetryd` is left out of the default profile since it tails a host maillog (see the
 note in `deploy/docker-compose.yml`).
 
-**Production / VPS.** A prod overlay (`deploy/docker-compose.prod.yml`) adds a Caddy
-reverse proxy with automatic TLS and serves everything on one domain; credentials come
-from `deploy/.env` (template: `deploy/.env.prod.example`) and all backing services stay
-on loopback. Deploy with `make up-prod` — full runbook in
-[`docs/deploy-vps.md`](docs/deploy-vps.md).
+**Production / VPS.** The quickest path is the interactive installer — on the VPS, from a
+clone of the repo:
+
+```bash
+bash deploy/install.sh   # or: make install
+```
+
+It prompts for your domain, AI model, relay option, and tenant/owner, auto-generates
+strong secrets into `deploy/.env`, brings up the full stack behind **Caddy** (automatic
+TLS, single domain), and bootstraps your tenant + owner login. Under the hood it uses the
+prod overlay (`deploy/docker-compose.prod.yml`); all backing services stay on loopback and
+Caddy is the only public service. For the manual path and operations, see the full runbook
+[`docs/deploy-vps.md`](docs/deploy-vps.md) (and [`docs/deploy-relay.md`](docs/deploy-relay.md)
+for running Postfix on the same box).
 
 ---
 

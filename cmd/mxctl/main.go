@@ -58,8 +58,45 @@ func newRootCmd() *cobra.Command {
 		userCmd(loadCfg),
 		ipPoolCmd(loadCfg),
 		relayNodeCmd(loadCfg),
+		tenantCmd(loadCfg),
 	)
 	return root
+}
+
+func tenantCmd(load func() (config.Config, error)) *cobra.Command {
+	c := &cobra.Command{Use: "tenant", Short: "Manage tenants"}
+
+	var name, slug, kind string
+	create := &cobra.Command{
+		Use:   "create",
+		Short: "Create a tenant",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if name == "" || slug == "" {
+				return fmt.Errorf("--name and --slug are required")
+			}
+			cfg, err := load()
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			pg, err := pgstore.New(ctx, cfg.Postgres)
+			if err != nil {
+				return err
+			}
+			defer pg.Close()
+			id, err := pg.CreateTenant(ctx, pgstore.Tenant{Name: name, Slug: slug, Kind: kind})
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "created tenant %s (%s, slug %s)\n", id, name, slug)
+			return nil
+		},
+	}
+	create.Flags().StringVar(&name, "name", "", "tenant display name")
+	create.Flags().StringVar(&slug, "slug", "", "tenant slug (unique)")
+	create.Flags().StringVar(&kind, "kind", "enterprise", "hosting_provider|msp|enterprise")
+	c.AddCommand(create)
+	return c
 }
 
 func ipPoolCmd(load func() (config.Config, error)) *cobra.Command {

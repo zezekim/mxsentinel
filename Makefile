@@ -40,6 +40,10 @@ up: ## Start the local dev stack
 up-app: ## Build + run the FULL platform in containers (services + dashboard)
 	$(COMPOSE) --profile app up --build -d
 
+.PHONY: install
+install: ## Interactive production installer (run on the VPS) — prompts, writes .env, deploys
+	bash deploy/install.sh
+
 .PHONY: up-prod
 up-prod: ## Production deploy behind Caddy TLS (needs deploy/.env; see docs/deploy-vps.md)
 	$(COMPOSE) -f deploy/docker-compose.prod.yml --profile app --env-file deploy/.env up -d --build
