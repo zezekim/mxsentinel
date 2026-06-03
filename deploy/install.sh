@@ -2,8 +2,9 @@
 #
 # MX Sentinel — all-in-one installer for a fresh Debian/Ubuntu VPS.
 #
-#     sudo bash deploy/install.sh            # full provision + deploy
-#     bash deploy/install.sh --app-only      # skip OS provisioning (Docker etc. already present)
+#     sudo bash deploy/install.sh                    # full provision + deploy
+#     bash deploy/install.sh --app-only              # skip OS provisioning (Docker etc. already present)
+#     sudo bash deploy/install.sh --wire-relay-sasl  # (re-)wire relay SASL on an existing box, then exit
 #
 # It installs every dependency (Docker, optionally Ollama, optionally Postfix+OpenDKIM),
 # configures a firewall, then deploys the MX Sentinel stack behind Caddy (automatic TLS)
@@ -16,10 +17,12 @@
 set -euo pipefail
 
 APP_ONLY=0
+WIRE_RELAY_SASL=0
 for arg in "$@"; do
 	case "$arg" in
 		--app-only) APP_ONLY=1 ;;
-		-h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+		--wire-relay-sasl) WIRE_RELAY_SASL=1 ;;
+		-h|--help) sed -n '2,16p' "$0"; exit 0 ;;
 		*) echo "unknown flag: $arg" >&2; exit 2 ;;
 	esac
 done
@@ -74,7 +77,10 @@ fi
 have openssl || die "openssl not found"
 
 # ---- collect settings ------------------------------------------------------
+# Skipped for --wire-relay-sasl: that is a focused maintenance run (re-wire Dovecot only),
+# not a deploy, so it neither prompts nor writes deploy/.env.
 REUSE_ENV=0
+if [ "$WIRE_RELAY_SASL" -eq 0 ]; then
 if [ -f "$ENV_FILE" ]; then
 	if yesno "$ENV_FILE exists. Reuse it and just (re)deploy?" y; then
 		REUSE_ENV=1
@@ -160,6 +166,7 @@ EOF
 	chmod 600 "$ENV_FILE"
 	info "wrote $ENV_FILE"
 fi
+fi  # end --wire-relay-sasl guard around interactive settings
 
 # ---- OS provisioning -------------------------------------------------------
 apt_install() { DEBIAN_FRONTEND=noninteractive apt-get install -y "$@" >/dev/null; }
@@ -329,6 +336,26 @@ provision_firewall() {
 	info "firewall: 22/80/443$([ "${RELAY:-0}" -eq 1 ] && echo "/25/587") allowed"
 }
 
+# Focused maintenance path: (re-)wire relay SASL on an already-provisioned relay box, then
+# exit. Idempotent — safe to run repeatedly. Picks up the Postgres credentials Dovecot
+# needs from deploy/.env. Use this to bring an older relay (provisioned before SMTP-user
+# support existed) up to date without a full redeploy.
+if [ "$WIRE_RELAY_SASL" -eq 1 ]; then
+	[ "$(id -u)" -eq 0 ] || die "--wire-relay-sasl needs root — run: sudo bash deploy/install.sh --wire-relay-sasl"
+	is_debian || die "--wire-relay-sasl supports Debian/Ubuntu (it installs Dovecot via apt)"
+	have postconf || die "Postfix not found on this host — provision the relay first (full install, without --wire-relay-sasl)"
+	[ -f "$ENV_FILE" ] || die "$ENV_FILE not found — it holds the Postgres credentials Dovecot connects with"
+	set -a
+	# shellcheck source=/dev/null
+	. "$ENV_FILE"
+	set +a
+	provision_dovecot
+	bold "Done ✓ — relay SASL wired"
+	info "Submission endpoint: ${MXS_DOMAIN:-this host}:587 (STARTTLS, AUTH PLAIN/LOGIN)"
+	info "Manage users in the dashboard (SMTP Users) or: mxctl smtp-user create … (see docs/smarthost.md)"
+	exit 0
+fi
+
 # Provision the OS only on a fresh config. Reusing an existing .env means "just
 # redeploy" — the box is already provisioned (and we don't have the original answers).
 if [ "$APP_ONLY" -eq 0 ] && [ "$REUSE_ENV" -eq 0 ]; then
@@ -434,4 +461,11 @@ if [ "${RELAY:-0}" -eq 1 ] && [ "$APP_ONLY" -eq 0 ] && [ "$REUSE_ENV" -eq 0 ]; t
 	info "Manage SMTP submission users in the dashboard (SMTP Users) or: mxctl smtp-user create …"
 	info "Smarthost client setup (cPanel/Exim/Postfix/apps): see docs/smarthost.md."
 	info "Multi-IP sender pools and warmup: see docs/deploy-relay.md."
+fi
+
+# Relay on this host but SASL not wired (e.g. it was provisioned before SMTP-user support).
+# Surface the one-shot, idempotent fix rather than silently leaving logins broken.
+if [ "${RELAY:-0}" -eq 1 ] && [ ! -f /etc/dovecot/dovecot-sql.conf.ext ]; then
+	warn "Relay SASL is not wired on this host yet — SMTP submission users cannot authenticate."
+	warn "Wire it (idempotent, no redeploy): sudo bash deploy/install.sh --wire-relay-sasl"
 fi
