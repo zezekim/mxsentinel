@@ -17,6 +17,24 @@ function fmt(ts: string): string {
   return isNaN(d.getTime()) ? ts : d.toLocaleString();
 }
 
+// generatePassword returns a strong, copy-paste-safe credential. The alphabet is
+// alphanumeric only (no ambiguous chars, no `:` or quotes) so it pastes cleanly into
+// Postfix/Exim configs where `:` is a field separator.
+function generatePassword(len = 20): string {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  const buf = new Uint32Array(len);
+  crypto.getRandomValues(buf);
+  let out = "";
+  for (let i = 0; i < len; i++) out += alphabet[buf[i] % alphabet.length];
+  return out;
+}
+
+function copyToClipboard(text: string): void {
+  if (typeof navigator !== "undefined" && navigator.clipboard) {
+    navigator.clipboard.writeText(text).catch(() => {});
+  }
+}
+
 export default function SMTPUsersPage() {
   const [users, setUsers] = useState<SMTPUser[]>([]);
   const [loading, setLoading] = useState(true);
@@ -29,6 +47,12 @@ export default function SMTPUsersPage() {
   const [creating, setCreating] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [created, setCreated] = useState<{ username: string; password: string } | null>(null);
+
+  // Seed a suggested password after mount (client-only — uses Web Crypto).
+  useEffect(() => {
+    setPassword(generatePassword());
+  }, []);
 
   const refresh = useCallback(() => {
     setLoading(true);
@@ -47,6 +71,7 @@ export default function SMTPUsersPage() {
     e.preventDefault();
     setFormError(null);
     setNotice(null);
+    setCreated(null);
     setCreating(true);
     try {
       const u = await createSMTPUser({
@@ -54,11 +79,10 @@ export default function SMTPUsersPage() {
         password,
         domain: domain.trim() || undefined,
       });
-      setNotice(
-        `Created "${u.username}". Configure your smarthost to authenticate with this username and the password you just set.`,
-      );
+      // Reveal the password once — it's stored only as a hash and can't be shown again.
+      setCreated({ username: u.username, password });
       setUsername("");
-      setPassword("");
+      setPassword(generatePassword());
       setDomain("");
       refresh();
     } catch (err: unknown) {
@@ -124,13 +148,23 @@ export default function SMTPUsersPage() {
           required
         />
         <input
-          type="password"
-          placeholder="Password (min 8 chars)"
+          type="text"
+          placeholder="Password (auto-generated)"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          autoComplete="new-password"
+          autoComplete="off"
+          spellCheck={false}
+          style={{ minWidth: 220, fontFamily: "monospace" }}
           required
         />
+        <button
+          type="button"
+          className="gen-btn"
+          onClick={() => setPassword(generatePassword())}
+          title="Suggest a new strong password"
+        >
+          Generate
+        </button>
         <input
           type="text"
           placeholder="Sending domain (optional)"
@@ -144,6 +178,21 @@ export default function SMTPUsersPage() {
 
       {formError && <p className="state-msg error">{formError}</p>}
       {notice && <p className="notice-banner">{notice}</p>}
+      {created && (
+        <div className="notice-banner cred-created">
+          <strong>Created {created.username}.</strong> Copy this password now — it is stored
+          only as a hash and won&apos;t be shown again.
+          <div className="cred-reveal">
+            <code>{created.password}</code>
+            <button type="button" className="btn-sm" onClick={() => copyToClipboard(created.password)}>
+              Copy
+            </button>
+            <button type="button" className="btn-sm" onClick={() => setCreated(null)}>
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
 
       <LoadingError loading={loading} error={error} />
 
