@@ -291,23 +291,40 @@ sudo systemctl reload postfix
 
 ### 4.5 SASL authentication for submission clients
 
-Allow cPanel/Exim and application servers to authenticate:
+`deploy/install.sh` (relay mode) wires submission auth to **Dovecot backed by Postgres**,
+so SMTP submission users are managed in the dashboard (**SMTP Users**) or via
+`mxctl smtp-user create` — no flat password files to edit or reload. The installer writes:
+
+- `/etc/dovecot/dovecot.conf` — Dovecot as a SASL provider only (no IMAP/POP), exposing the
+  auth socket at `/var/spool/postfix/private/auth`.
+- `/etc/dovecot/dovecot-sql.conf.ext` — a `pgsql` passdb querying the `smtp_users` table
+  (`default_pass_scheme = BLF-CRYPT`; passwords are bcrypt hashes).
+- Postfix `submission/inet` (587) with `smtpd_sasl_type=dovecot`,
+  `smtpd_sasl_path=private/auth`, `smtpd_tls_auth_only=yes`, and
+  `permit_sasl_authenticated, reject` restrictions.
+
+Create the first credential during install (it offers to), in the dashboard, or with:
 
 ```bash
-# /etc/postfix/sasl/smtpd.conf
-pwcheck_method: auxprop
-auxprop_plugin: sasldb
-mech_list: PLAIN LOGIN
+mxctl smtp-user create --tenant demo \
+  --username mailer@send.example.com --password 'a-strong-password' --domain send.example.com
 ```
 
-```bash
-sudo saslpasswd2 -c -u relay.example.com senduser
-sudo chown postfix:postfix /etc/sasldb2
-sudo chmod 660 /etc/sasldb2
+Client-side configuration (cPanel/Exim/Postfix/app), DNS, and testing are covered in
+**[smarthost.md](smarthost.md)**.
+
+If you set this up by hand instead of via the installer, the equivalent password query is:
+
+```
+# /etc/dovecot/dovecot-sql.conf.ext
+driver = pgsql
+connect = host=127.0.0.1 port=5432 dbname=mxsentinel user=mxsentinel password=<from deploy/.env>
+default_pass_scheme = BLF-CRYPT
+password_query = SELECT username AS "user", password_hash AS password FROM smtp_users WHERE username = '%u' AND enabled = TRUE
 ```
 
 Alternatively, restrict by trusted IP (`mynetworks`) if your cPanel servers have fixed IPs
-and you do not want to manage SASL passwords.
+and you do not want to manage SASL passwords at all.
 
 ---
 

@@ -54,6 +54,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/auth/logout", s.handleLogout)
 	mux.HandleFunc("GET /v1/users", s.requireScope(ScopeAdmin, s.handleListUsers))
 	mux.HandleFunc("POST /v1/users", s.requireScope(ScopeAdmin, s.handleCreateUser))
+	mux.HandleFunc("GET /v1/smtp-users", s.requireScope(ScopeAdmin, s.handleListSMTPUsers))
+	mux.HandleFunc("POST /v1/smtp-users", s.requireScope(ScopeAdmin, s.handleCreateSMTPUser))
+	mux.HandleFunc("PATCH /v1/smtp-users/{id}", s.requireScope(ScopeAdmin, s.handleUpdateSMTPUser))
+	mux.HandleFunc("DELETE /v1/smtp-users/{id}", s.requireScope(ScopeAdmin, s.handleDeleteSMTPUser))
+	mux.HandleFunc("GET /v1/settings", s.requireScope(ScopeRead, s.handleGetSettings))
+	mux.HandleFunc("PUT /v1/settings", s.requireScope(ScopeAdmin, s.handleUpdateSettings))
 
 	// The authed pipeline: auth → rate limit (per tenant) → audit (records mutations).
 	authed := chain(mux, s.requireAuth, s.rateLimit, s.auditWrites)

@@ -61,7 +61,11 @@ export async function apiGet<T>(path: string): Promise<T> {
   return handleResponse<T>(res);
 }
 
-export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
+async function apiSend<T>(
+  method: "POST" | "PUT" | "PATCH" | "DELETE",
+  path: string,
+  body?: unknown,
+): Promise<T> {
   const headers: Record<string, string> = {
     ...(authHeaders() as Record<string, string>),
   };
@@ -69,12 +73,28 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
     headers["Content-Type"] = "application/json";
   }
   const res = await fetch(`${API_BASE}${path}`, {
-    method: "POST",
+    method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
     cache: "no-store",
   });
   return handleResponse<T>(res);
+}
+
+export function apiPost<T>(path: string, body?: unknown): Promise<T> {
+  return apiSend<T>("POST", path, body);
+}
+
+export function apiPut<T>(path: string, body?: unknown): Promise<T> {
+  return apiSend<T>("PUT", path, body);
+}
+
+export function apiPatch<T>(path: string, body?: unknown): Promise<T> {
+  return apiSend<T>("PATCH", path, body);
+}
+
+export function apiDelete<T>(path: string): Promise<T> {
+  return apiSend<T>("DELETE", path);
 }
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
@@ -299,4 +319,70 @@ export function listIncidents(params: ListIncidentsParams = {}): Promise<Inciden
 
 export function resolveIncident(id: string): Promise<{ resolved: boolean }> {
   return apiPost<{ resolved: boolean }>(`/v1/incidents/${id}/resolve`);
+}
+
+// ─── SMTP submission users ──────────────────────────────────────────────────
+
+export interface SMTPUser {
+  id: string;
+  username: string;
+  domain: string;
+  enabled: boolean;
+  created_at: string;
+}
+
+export interface SMTPUsersResponse {
+  users: SMTPUser[];
+}
+
+export interface CreateSMTPUserInput {
+  username: string;
+  password: string;
+  domain?: string;
+}
+
+export function listSMTPUsers(): Promise<SMTPUsersResponse> {
+  return apiGet<SMTPUsersResponse>("/v1/smtp-users");
+}
+
+export function createSMTPUser(input: CreateSMTPUserInput): Promise<SMTPUser> {
+  return apiPost<SMTPUser>("/v1/smtp-users", input);
+}
+
+export function setSMTPUserEnabled(id: string, enabled: boolean): Promise<{ ok: boolean }> {
+  return apiPatch<{ ok: boolean }>(`/v1/smtp-users/${id}`, { enabled });
+}
+
+export function resetSMTPUserPassword(id: string, password: string): Promise<{ ok: boolean }> {
+  return apiPatch<{ ok: boolean }>(`/v1/smtp-users/${id}`, { password });
+}
+
+export function deleteSMTPUser(id: string): Promise<{ deleted: boolean }> {
+  return apiDelete<{ deleted: boolean }>(`/v1/smtp-users/${id}`);
+}
+
+// ─── Mail settings ──────────────────────────────────────────────────────────
+
+export type DMARCPolicy = "none" | "quarantine" | "reject";
+
+export interface MailSettings {
+  spf_include: string;
+  dkim_selector: string;
+  dmarc_policy: DMARCPolicy;
+  dmarc_rua: string;
+  dmarc_ruf: string;
+  relay_host: string;
+  relay_port: number;
+}
+
+export interface SettingsResponse {
+  settings: MailSettings;
+}
+
+export function getSettings(): Promise<SettingsResponse> {
+  return apiGet<SettingsResponse>("/v1/settings");
+}
+
+export function updateSettings(settings: MailSettings): Promise<SettingsResponse> {
+  return apiPut<SettingsResponse>("/v1/settings", settings);
 }

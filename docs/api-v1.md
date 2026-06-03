@@ -179,6 +179,33 @@ they are `null` until an incident has been analyzed.
 ### `POST /v1/incidents/{id}/resolve`
 Marks an incident resolved → `{ "resolved": true }` (404 if not found for the tenant).
 
+### `GET /v1/smtp-users` (admin)
+Lists the tenant's SMTP submission users → `{ "users": [ { "id","username","domain","enabled","created_at" } ] }`.
+Password hashes are never returned.
+
+### `POST /v1/smtp-users` (admin)
+`{ "username", "password", "domain"? }` → **201** `{ "id","username","domain","enabled" }`.
+`username` is globally unique (the relay's SASL login); `password` is ≥ 8 chars and stored
+as a bcrypt hash. **409** if the username already exists.
+
+### `PATCH /v1/smtp-users/{id}` (admin)
+`{ "enabled"?: bool, "password"?: string }` (at least one) → `{ "ok": true }`. Toggles the
+account and/or resets its password. **404** if not found for the tenant.
+
+### `DELETE /v1/smtp-users/{id}` (admin)
+Removes the credential → `{ "deleted": true }` (404 if not found for the tenant).
+
+### `GET /v1/settings` (read)
+Returns the tenant's mail settings → `{ "settings": { "spf_include","dkim_selector",
+"dmarc_policy","dmarc_rua","dmarc_ruf","relay_host","relay_port" } }`. Unset fields fall
+back to defaults (`dkim_selector=mxs`, `dmarc_policy=none`, `relay_port=587`).
+
+### `PUT /v1/settings` (admin)
+Replaces the tenant's mail settings (same shape) → `{ "settings": { … } }`.
+`dmarc_policy` must be `none`|`quarantine`|`reject`. Stored under the `mail` key of the
+tenant's `settings` JSONB. These drive the recommended DNS records and the smarthost
+connection instructions (see [smarthost.md](smarthost.md)).
+
 ## Notes
 - Routing uses the Go 1.22 stdlib `net/http` mux (`GET /v1/domains/{id}/health`,
   `r.PathValue("id")`) — no third-party router.
