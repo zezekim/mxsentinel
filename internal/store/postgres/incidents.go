@@ -198,3 +198,29 @@ func (s *Store) ResolveIncident(ctx context.Context, tenantID, id string) (found
 	}
 	return tag.RowsAffected() > 0, nil
 }
+
+// RecentIncidentTitles returns recent incident titles for a tenant's domain (excluding
+// excludeID), newest first — historical context for AI diagnosis.
+func (s *Store) RecentIncidentTitles(ctx context.Context, tenantID, domain, excludeID string, limit int) ([]string, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	const q = `SELECT title FROM incidents
+	           WHERE tenant_id = $1 AND domain = $2 AND id <> $3
+	           ORDER BY created_at DESC LIMIT $4`
+	rows, err := s.Pool.Query(ctx, q, tenantID, domain, excludeID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("recent incident titles: %w", err)
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, fmt.Errorf("scan incident title: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}

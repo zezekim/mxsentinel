@@ -356,3 +356,137 @@ table a:hover {
   border-radius: 6px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
+
+/* ── Incidents expandable rows ───────────────────────────────────────────── */
+
+.incident-row-main {
+  cursor: pointer;
+  user-select: none;
+}
+
+.incident-row-main:hover {
+  background: #f0f4ff;
+}
+
+.incident-detail-row td {
+  background: #fafbff;
+  padding: 0.75rem 1rem 1rem 1.25rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.incident-detail-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.incident-detail-block .detail-section-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #555;
+  margin-bottom: 0.25rem;
+}
+
+.incident-ai-summary {
+  font-size: 0.875rem;
+  color: #1a1a2e;
+  line-height: 1.6;
+}
+
+.incident-ai-pending {
+  font-size: 0.8rem;
+  color: #9ca3af;
+  font-style: italic;
+}
+
+.incident-remediation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.incident-remediation-item {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 5px;
+  padding: 0.4rem 0.65rem;
+  font-size: 0.8rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+  align-items: baseline;
+}
+
+.incident-remediation-item .rem-action {
+  font-weight: 600;
+  color: #1d4ed8;
+}
+
+.incident-remediation-item .rem-target {
+  color: #555;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+}
+
+.incident-remediation-item .rem-priority {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 0.1em 0.4em;
+  border-radius: 3px;
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.incident-detail-json {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  background: #f8f9fa;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  overflow-x: auto;
+  white-space: pre;
+  color: #374151;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.btn-resolve {
+  padding: 0.3rem 0.65rem;
+  border: none;
+  border-radius: 4px;
+  background: #16a34a;
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+  white-space: nowrap;
+}
+
+.btn-resolve:hover {
+  background: #15803d;
+}
+
+.btn-resolve:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.badge-open {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.badge-acknowledged {
+  background: #fef9c3;
+  color: #854d0e;
+}
+
+.badge-resolved {
+  background: #dcfce7;
+  color: #166534;
+}

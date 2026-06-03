@@ -33,6 +33,9 @@ type Incident struct {
 	Title         string          `json:"title"`
 	Detail        json.RawMessage `json:"detail,omitempty"`
 	Confidence    *float64        `json:"correlation_confidence,omitempty"`
+	// Context carries recent historical signal (deliverability stats, prior incidents)
+	// so the model can reason in context. Populated by the caller; metadata only.
+	Context map[string]any `json:"context,omitempty"`
 }
 
 // Diagnosis is the parsed structured LLM result.

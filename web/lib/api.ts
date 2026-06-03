@@ -145,3 +145,60 @@ export interface DmarcReportsResponse {
   reports: DmarcReport[];
   alignment: DmarcAlignment;
 }
+
+// ─── Incidents ────────────────────────────────────────────────────────────────
+
+export type IncidentKind =
+  | "rejection_spike"
+  | "blacklist"
+  | "dns_validation"
+  | "other";
+
+export type IncidentStatus = "open" | "acknowledged" | "resolved";
+
+export interface AIRecommendation {
+  action: string;
+  summary: string;
+  target: string;
+  priority: string;
+}
+
+export interface Incident {
+  id: string;
+  source_event_id: string;
+  kind: IncidentKind;
+  severity: Severity;
+  domain: string;
+  subject: string;
+  title: string;
+  detail: Record<string, unknown>;
+  status: IncidentStatus;
+  confidence: number | null;
+  created_at: string;
+  resolved_at: string | null;
+  ai_summary: string | null;
+  ai_remediation: AIRecommendation[] | null;
+  ai_model: string | null;
+  ai_analyzed_at: string | null;
+}
+
+export interface IncidentsResponse {
+  incidents: Incident[];
+}
+
+export interface ListIncidentsParams {
+  status?: IncidentStatus | "";
+  domain?: string;
+  limit?: number;
+}
+
+export function listIncidents(params: ListIncidentsParams = {}): Promise<IncidentsResponse> {
+  const q = new URLSearchParams({ limit: String(params.limit ?? 50) });
+  if (params.status) q.set("status", params.status);
+  if (params.domain) q.set("domain", params.domain);
+  return apiGet<IncidentsResponse>(`/v1/incidents?${q.toString()}`);
+}
+
+export function resolveIncident(id: string): Promise<{ resolved: boolean }> {
+  return apiPost<{ resolved: boolean }>(`/v1/incidents/${id}/resolve`);
+}

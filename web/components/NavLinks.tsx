@@ -7,6 +7,7 @@ const links = [
   { href: "/", label: "Domains" },
   { href: "/messages", label: "Messages" },
   { href: "/dmarc", label: "DMARC" },
+  { href: "/incidents", label: "Incidents" },
 ];
 
 export default function NavLinks() {
