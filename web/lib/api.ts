@@ -155,6 +155,16 @@ export function me(): Promise<Me> {
   return apiGet<Me>("/v1/me");
 }
 
+export function changePassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<{ ok: boolean }> {
+  return apiPost<{ ok: boolean }>("/v1/me/password", {
+    current_password: currentPassword,
+    new_password: newPassword,
+  });
+}
+
 // ─── Response types ──────────────────────────────────────────────────────────
 
 export type StatusColor = "ok" | "warning" | "critical" | "unknown";

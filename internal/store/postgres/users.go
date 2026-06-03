@@ -47,6 +47,34 @@ func (s *Store) GetUserByEmail(ctx context.Context, email string) (User, bool, e
 	return u, true, nil
 }
 
+// GetUserByID looks up a user by id, including the password hash (for self-service
+// password changes). found=false (nil error) when no such user exists.
+func (s *Store) GetUserByID(ctx context.Context, userID string) (User, bool, error) {
+	const q = `SELECT id, tenant_id, email::text, role::text, status::text, COALESCE(password_hash, '')
+	           FROM users WHERE id = $1`
+	var u User
+	err := s.Pool.QueryRow(ctx, q, userID).Scan(&u.ID, &u.TenantID, &u.Email, &u.Role, &u.Status, &u.PasswordHash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return User{}, false, nil
+	}
+	if err != nil {
+		return User{}, false, fmt.Errorf("get user by id: %w", err)
+	}
+	return u, true, nil
+}
+
+// UpdateUserPassword sets a user's bcrypt password hash. Scoped by tenant for defense in
+// depth. found=false (nil error) when no matching user exists.
+func (s *Store) UpdateUserPassword(ctx context.Context, userID, tenantID, passwordHash string) (bool, error) {
+	const q = `UPDATE users SET password_hash = $3, updated_at = now()
+	           WHERE id = $1 AND tenant_id = $2`
+	tag, err := s.Pool.Exec(ctx, q, userID, tenantID, passwordHash)
+	if err != nil {
+		return false, fmt.Errorf("update user password: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 // ListUsers returns a tenant's users (without password hashes).
 func (s *Store) ListUsers(ctx context.Context, tenantID string) ([]User, error) {
 	const q = `SELECT id, tenant_id, email::text, role::text, status::text

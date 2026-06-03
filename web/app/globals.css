@@ -414,6 +414,36 @@ table a:hover {
   border-color: #f87171;
 }
 
+/* Secondary (ghost) button inside a .filters row — e.g. "Generate" password. */
+.filters button.gen-btn {
+  background: #fff;
+  color: #1a1a2e;
+  border: 1px solid #d1d5db;
+}
+
+.filters button.gen-btn:hover {
+  background: #f1f5f9;
+}
+
+/* Revealed credential (shown once after creation). */
+.cred-reveal {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.cred-reveal code {
+  background: #fff;
+  border: 1px solid #bbf7d0;
+  border-radius: 4px;
+  padding: 0.3rem 0.55rem;
+  font-size: 0.85rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  user-select: all;
+}
+
 /* ── Settings form ───────────────────────────────────────────────────────── */
 
 .settings-form {
