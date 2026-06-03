@@ -95,7 +95,9 @@ services:
       retries: 10
 
   nats:
-    image: nats:2.10
+    # alpine variant has a shell + busybox wget; the default nats image is FROM scratch
+    # (no shell/wget), so a CMD-SHELL healthcheck can't run there.
+    image: nats:2.10-alpine
     command: ["-js", "-sd", "/data", "-m", "8222"]
     ports:
       - "127.0.0.1:4222:4222"   # client
@@ -103,7 +105,7 @@ services:
     volumes:
       - natsdata:/data
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8222/healthz || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8222/healthz || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 10
