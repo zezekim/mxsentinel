@@ -84,6 +84,7 @@ if [ -f "$ENV_FILE" ]; then
 		set +a
 		RELAY=0; [ -n "${RELAY_NODE_IP:-}" ] && RELAY=1
 		DOMAIN="${MXS_DOMAIN:-}"; AI_MODEL="${MXS_AI_MODEL:-}"; AI_ENDPOINT="${MXS_AI_ENDPOINT:-}"
+		MAIL_DOMAIN="${MAIL_DOMAIN:-$DOMAIN}"
 	else
 		cp "$ENV_FILE" "$ENV_FILE.bak.$(date +%s)"; warn "backed up existing $ENV_FILE"
 	fi
@@ -151,6 +152,7 @@ MINIO_BUCKET=mxsentinel
 MXS_AI_ENDPOINT=$AI_ENDPOINT
 MXS_AI_MODEL=$AI_MODEL
 RELAY_NODE_IP=$RELAY_NODE_IP
+MAIL_DOMAIN=$MAIL_DOMAIN
 MAILLOG_PATH=$MAILLOG_PATH
 MXS_TELEMETRY_HASHKEY=$MXS_TELEMETRY_HASHKEY
 MXS_LOGLEVEL=info
@@ -260,15 +262,17 @@ provision_firewall() {
 	info "firewall: 22/80/443$([ "${RELAY:-0}" -eq 1 ] && echo "/25/587") allowed"
 }
 
-if [ "$APP_ONLY" -eq 0 ]; then
+# Provision the OS only on a fresh config. Reusing an existing .env means "just
+# redeploy" — the box is already provisioned (and we don't have the original answers).
+if [ "$APP_ONLY" -eq 0 ] && [ "$REUSE_ENV" -eq 0 ]; then
 	provision_base
 	provision_docker
-	[ "${AI_LOCAL:-0}" -eq 1 ] && [ -n "${AI_MODEL:-}" ] && provision_ollama
+	{ [ "${AI_LOCAL:-0}" -eq 1 ] && [ -n "${AI_MODEL:-}" ]; } && provision_ollama
 	[ "${RELAY:-0}" -eq 1 ] && provision_postfix
 	provision_firewall
 else
-	have docker || die "--app-only requires Docker to be installed already"
-	docker compose version >/dev/null 2>&1 || die "--app-only requires Docker Compose v2"
+	have docker || die "Docker is required (run without --app-only on a fresh box to auto-install it)"
+	docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is required"
 fi
 
 # ---- deploy ----------------------------------------------------------------
@@ -303,6 +307,15 @@ if [ "$REUSE_ENV" -eq 0 ]; then
 			[ -n "$POOL_ADDRS" ] && { mxctl ip-pool create --tenant "$TENANT_SLUG" --name "$POOL_NAME" --purpose "$POOL_PURPOSE" --addresses "$POOL_ADDRS" || warn "ip-pool create failed"; }
 		fi
 	fi
+else
+	# Reused .env: credentials aren't stored, so we can't bootstrap. If you don't yet
+	# have a login (e.g. a previous run failed before this step), create one now:
+	info "Reused existing config — skipped tenant/owner bootstrap."
+	info "  No login yet? Create one:"
+	info "    docker compose -f $BASE -f $PROD --env-file $ENV_FILE --profile app run --rm apid \\"
+	info "      /usr/local/bin/mxctl tenant create --name <Org> --slug <slug>"
+	info "    docker compose -f $BASE -f $PROD --env-file $ENV_FILE --profile app run --rm apid \\"
+	info "      /usr/local/bin/mxctl user create --tenant <slug> --email <you> --password <pw> --role owner"
 fi
 
 # ---- summary + DNS records to publish --------------------------------------
@@ -313,7 +326,7 @@ info "Config/secrets: $ENV_FILE (private; never commit)"
 info "Logs: docker compose -f $BASE -f $PROD --env-file $ENV_FILE ${PROFILES[*]} logs -f apid aid"
 info "Caddy issues TLS automatically once $DOMAIN resolves here and 80/443 are open."
 
-if [ "${RELAY:-0}" -eq 1 ] && [ "$APP_ONLY" -eq 0 ]; then
+if [ "${RELAY:-0}" -eq 1 ] && [ "$APP_ONLY" -eq 0 ] && [ "$REUSE_ENV" -eq 0 ]; then
 	bold "DNS records to publish for $MAIL_DOMAIN (the installer cannot set these for you)"
 	info "1. PTR / reverse DNS for each sending IP -> a hostname under $MAIL_DOMAIN (set at your VPS provider)."
 	info "2. SPF  (TXT @):   v=spf1 ip4:${RELAY_NODE_IP:-YOUR_IP} -all   (add every sending IP as ip4:)"
