@@ -280,6 +280,21 @@ COMPOSE=(docker compose -f "$BASE" -f "$PROD" --env-file "$ENV_FILE")
 PROFILES=(--profile app)
 [ "${RELAY:-0}" -eq 1 ] && PROFILES+=(--profile relay)
 
+# A fresh (non-reuse) run generates NEW database credentials. Docker only applies a DB
+# password when it first creates the data volume, so volumes left over from an earlier
+# run still carry the OLD password — migrate would then fail with a password-auth error.
+# Detect leftover volumes and offer to reset them for a clean install.
+if [ "$REUSE_ENV" -eq 0 ] && docker volume ls -q 2>/dev/null | grep -q "^mxsentinel_"; then
+	warn "Found existing 'mxsentinel_*' data volumes from a previous run."
+	warn "This run generated fresh credentials, which will NOT match those volumes (migrate would fail to authenticate)."
+	if yesno "Reset (delete) the existing data volumes for a clean install?" y; then
+		"${COMPOSE[@]}" "${PROFILES[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
+		info "stale volumes removed — Postgres will re-initialize with the new credentials"
+	else
+		warn "Keeping volumes — if deploy fails on a password-auth error, re-run and choose to reset."
+	fi
+fi
+
 bold "Deploying MX Sentinel (building images — first run takes a few minutes)…"
 "${COMPOSE[@]}" "${PROFILES[@]}" up -d --build
 
