@@ -18,10 +18,11 @@ telemetry-spool.ndjson
 /web/.next/
 /web/out/
 
-# Env / secrets — never commit
+# Env / secrets — never commit (deploy/.env, .env, etc.) but keep the example templates
 .env
 .env.*
 !.env.example
+!.env.prod.example
 
 # OS / editor
 .DS_Store

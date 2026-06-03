@@ -83,8 +83,11 @@ jobs:
           context: ./web
           push: false
           tags: mxsentinel-dashboard:ci
-      - name: Validate compose config
-        run: docker compose -f deploy/docker-compose.yml config >/dev/null
+      - name: Validate compose config (base + prod overlay)
+        run: |
+          docker compose -f deploy/docker-compose.yml config >/dev/null
+          MXS_DOMAIN=example.com MXS_ACME_EMAIL=ops@example.com \
+            docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.prod.yml config >/dev/null
 
   schema-lint:
     name: validate event schemas

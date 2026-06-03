@@ -1,0 +1,43 @@
+# MX Sentinel — production overlay. Layer ON TOP of docker-compose.yml:
+#
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.prod.yml \
+#     --profile app --env-file deploy/.env up -d --build
+#
+# Adds a Caddy reverse proxy that terminates TLS (automatic Let's Encrypt) and serves a
+# single domain: /v1/* -> apid, everything else -> the dashboard (same origin, no CORS).
+# Caddy is the only publicly-exposed service; all backing services stay on 127.0.0.1 /
+# the internal network (see the base compose). Secrets come from deploy/.env.
+#
+# See docs/deploy-vps.md for the full runbook.
+
+name: mxsentinel
+
+services:
+  caddy:
+    image: caddy:2
+    profiles: ["app"]
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      MXS_DOMAIN: "${MXS_DOMAIN:?set MXS_DOMAIN in deploy/.env}"
+      MXS_ACME_EMAIL: "${MXS_ACME_EMAIL:?set MXS_ACME_EMAIL in deploy/.env}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on:
+      - apid
+      - dashboard
+
+  # Bake the public API base into the dashboard build (it's served same-origin behind
+  # Caddy, so the browser calls https://<domain>/v1/...).
+  dashboard:
+    build:
+      args:
+        NEXT_PUBLIC_API_BASE: "https://${MXS_DOMAIN:?set MXS_DOMAIN in deploy/.env}"
+
+volumes:
+  caddydata:
+  caddyconfig:

@@ -1,0 +1,21 @@
+# MX Sentinel reverse proxy. Caddy obtains and renews TLS certs automatically for
+# {$MXS_DOMAIN} via Let's Encrypt (the domain must resolve to this host and 80/443 must be
+# reachable). Single origin: /v1/* -> API, everything else -> dashboard.
+
+{
+	email {$MXS_ACME_EMAIL}
+}
+
+{$MXS_DOMAIN} {
+	encode gzip
+
+	# REST API
+	handle /v1/* {
+		reverse_proxy apid:8080
+	}
+
+	# Next.js dashboard (everything else)
+	handle {
+		reverse_proxy dashboard:3000
+	}
+}

@@ -17,22 +17,22 @@ name: mxsentinel
 # Shared environment for the Go services: point them at the compose service hostnames
 # (NOT localhost). Note MinIO's S3 API is on container port 9000 here.
 x-app-env: &app-env
-  MXS_LOGLEVEL: info
+  MXS_LOGLEVEL: "${MXS_LOGLEVEL:-info}"
   MXS_HTTPADDR: ":9090"
-  MXS_POSTGRES_DSN: "postgres://mxsentinel:mxsentinel@postgres:5432/mxsentinel?sslmode=disable"
+  MXS_POSTGRES_DSN: "postgres://${PG_USER:-mxsentinel}:${PG_PASSWORD:-mxsentinel}@postgres:5432/${PG_DB:-mxsentinel}?sslmode=disable"
   MXS_CLICKHOUSE_ADDR: "clickhouse:9000"
-  MXS_CLICKHOUSE_DATABASE: "mxsentinel"
+  MXS_CLICKHOUSE_DATABASE: "${CH_DB:-mxsentinel}"
   MXS_REDIS_ADDR: "redis:6379"
   MXS_NATS_URL: "nats://nats:4222"
   MXS_OBJECTSTORE_ENDPOINT: "minio:9000"
-  MXS_OBJECTSTORE_BUCKET: "mxsentinel"
-  MXS_OBJECTSTORE_ACCESSKEY: "minioadmin"
-  MXS_OBJECTSTORE_SECRETKEY: "minioadmin"
+  MXS_OBJECTSTORE_BUCKET: "${MINIO_BUCKET:-mxsentinel}"
+  MXS_OBJECTSTORE_ACCESSKEY: "${MINIO_ROOT_USER:-minioadmin}"
+  MXS_OBJECTSTORE_SECRETKEY: "${MINIO_ROOT_PASSWORD:-minioadmin}"
   # AI layer: aid expects a local LLM. There is no LLM service in this compose, so point
   # it at one you run yourself (host-run Ollama via host.docker.internal on Docker Desktop;
   # adjust for Linux). aid retries harmlessly until the endpoint is reachable.
-  MXS_AI_ENDPOINT: "http://host.docker.internal:11434/v1"
-  MXS_AI_MODEL: "llama3"
+  MXS_AI_ENDPOINT: "${MXS_AI_ENDPOINT:-http://host.docker.internal:11434/v1}"
+  MXS_AI_MODEL: "${MXS_AI_MODEL:-llama3}"
 
 # Shared definition for every Go service: one image (built from the root Dockerfile),
 # only started under the "app" profile.
@@ -47,15 +47,15 @@ services:
   postgres:
     image: postgres:16
     environment:
-      POSTGRES_USER: mxsentinel
-      POSTGRES_PASSWORD: mxsentinel
-      POSTGRES_DB: mxsentinel
+      POSTGRES_USER: "${PG_USER:-mxsentinel}"
+      POSTGRES_PASSWORD: "${PG_PASSWORD:-mxsentinel}"
+      POSTGRES_DB: "${PG_DB:-mxsentinel}"
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mxsentinel"]
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-mxsentinel}"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -63,11 +63,11 @@ services:
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
     environment:
-      CLICKHOUSE_DB: mxsentinel
+      CLICKHOUSE_DB: "${CH_DB:-mxsentinel}"
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
     ports:
-      - "9000:9000"   # native protocol (internal/store/clickhouse)
-      - "8123:8123"   # http
+      - "127.0.0.1:9000:9000"   # native protocol (internal/store/clickhouse)
+      - "127.0.0.1:8123:8123"   # http
     ulimits:
       nofile:
         soft: 262144
@@ -83,7 +83,7 @@ services:
   redis:
     image: redis:7
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -94,8 +94,8 @@ services:
     image: nats:2.10
     command: ["-js", "-sd", "/data", "-m", "8222"]
     ports:
-      - "4222:4222"   # client
-      - "8222:8222"   # monitoring
+      - "127.0.0.1:4222:4222"   # client
+      - "127.0.0.1:8222:8222"   # monitoring
     volumes:
       - natsdata:/data
     healthcheck:
@@ -108,11 +108,11 @@ services:
     image: minio/minio:latest
     command: server /data --console-address ":9090"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:-minioadmin}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:-minioadmin}"
     ports:
-      - "9001:9000"   # S3 API (internal/store/objectstore endpoint localhost:9001)
-      - "9091:9090"   # console
+      - "127.0.0.1:9001:9000"   # S3 API (internal/store/objectstore endpoint localhost:9001)
+      - "127.0.0.1:9091:9090"   # console
     volumes:
       - miniodata:/data
     healthcheck:
@@ -135,7 +135,7 @@ services:
     <<: *app
     command: ["/usr/local/bin/apid"]
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     depends_on:
       migrate: {condition: service_completed_successfully}
       postgres: {condition: service_healthy}
@@ -193,7 +193,7 @@ services:
     image: mxsentinel-dashboard:local
     profiles: ["app"]
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       - apid
 

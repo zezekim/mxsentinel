@@ -40,6 +40,10 @@ up: ## Start the local dev stack
 up-app: ## Build + run the FULL platform in containers (services + dashboard)
 	$(COMPOSE) --profile app up --build -d
 
+.PHONY: up-prod
+up-prod: ## Production deploy behind Caddy TLS (needs deploy/.env; see docs/deploy-vps.md)
+	$(COMPOSE) -f deploy/docker-compose.prod.yml --profile app --env-file deploy/.env up -d --build
+
 .PHONY: down
 down: ## Stop the local dev stack (add --profile app to stop app services too)
 	$(COMPOSE) --profile app down
