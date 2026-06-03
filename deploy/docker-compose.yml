@@ -197,10 +197,22 @@ services:
     depends_on:
       - apid
 
-  # telemetryd is intentionally not in the default app profile — it tails a host maillog.
-  # Run it ad hoc against the same image, mounting your log:
-  #   docker compose -f deploy/docker-compose.yml run --rm \
-  #     -v /var/log/maillog:/maillog:ro apid /usr/local/bin/telemetryd --follow /maillog
+  # telemetryd tails the host's Postfix maillog, so it only makes sense when the relay
+  # runs on this box. It's under the "relay" profile — enable with `--profile relay` (in
+  # addition to `--profile app`). Set RELAY_NODE_IP / MAILLOG_PATH / MXS_TELEMETRY_HASHKEY
+  # in deploy/.env. See docs/deploy-relay.md.
+  telemetryd:
+    <<: *app
+    profiles: ["relay"]
+    command: ["/usr/local/bin/telemetryd", "--follow", "/maillog", "--node-ip", "${RELAY_NODE_IP:-}"]
+    environment:
+      <<: *app-env
+      MXS_TELEMETRY_HASHKEY: "${MXS_TELEMETRY_HASHKEY:-}"
+    volumes:
+      - "${MAILLOG_PATH:-/var/log/mail.log}:/maillog:ro"
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      nats: {condition: service_healthy}
 
 volumes:
   pgdata:

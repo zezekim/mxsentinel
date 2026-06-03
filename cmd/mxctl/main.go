@@ -56,8 +56,103 @@ func newRootCmd() *cobra.Command {
 		seedCmd(loadCfg),
 		apikeyCmd(loadCfg),
 		userCmd(loadCfg),
+		ipPoolCmd(loadCfg),
+		relayNodeCmd(loadCfg),
 	)
 	return root
+}
+
+func ipPoolCmd(load func() (config.Config, error)) *cobra.Command {
+	c := &cobra.Command{Use: "ip-pool", Short: "Manage sending IP pools"}
+
+	var tenantSlug, name, purpose, addresses string
+	create := &cobra.Command{
+		Use:   "create",
+		Short: "Register a sending IP pool (so repd monitors its reputation)",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if tenantSlug == "" || name == "" || addresses == "" {
+				return fmt.Errorf("--tenant, --name, and --addresses are required")
+			}
+			switch purpose {
+			case "transactional", "marketing", "warmup", "mixed":
+			default:
+				return fmt.Errorf("invalid --purpose %q (transactional|marketing|warmup|mixed)", purpose)
+			}
+			var ips []string
+			for _, a := range strings.Split(addresses, ",") {
+				if a = strings.TrimSpace(a); a != "" {
+					ips = append(ips, a)
+				}
+			}
+			cfg, err := load()
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			pg, err := pgstore.New(ctx, cfg.Postgres)
+			if err != nil {
+				return err
+			}
+			defer pg.Close()
+			tenant, err := pg.GetTenantBySlug(ctx, tenantSlug)
+			if err != nil {
+				return err
+			}
+			id, err := pg.CreateIPPool(ctx, tenant.ID, name, purpose, ips)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "created ip pool %s (%s, purpose %s, %d address(es))\n", id, name, purpose, len(ips))
+			return nil
+		},
+	}
+	create.Flags().StringVar(&tenantSlug, "tenant", "", "tenant slug")
+	create.Flags().StringVar(&name, "name", "", "pool name")
+	create.Flags().StringVar(&purpose, "purpose", "mixed", "transactional|marketing|warmup|mixed")
+	create.Flags().StringVar(&addresses, "addresses", "", "comma-separated IPs")
+	c.AddCommand(create)
+	return c
+}
+
+func relayNodeCmd(load func() (config.Config, error)) *cobra.Command {
+	c := &cobra.Command{Use: "relay-node", Short: "Manage relay nodes"}
+
+	var tenantSlug, hostname, ip, software string
+	add := &cobra.Command{
+		Use:   "add",
+		Short: "Register a relay node (so its telemetry/reputation is attributed)",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if tenantSlug == "" || hostname == "" {
+				return fmt.Errorf("--tenant and --hostname are required")
+			}
+			cfg, err := load()
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			pg, err := pgstore.New(ctx, cfg.Postgres)
+			if err != nil {
+				return err
+			}
+			defer pg.Close()
+			tenant, err := pg.GetTenantBySlug(ctx, tenantSlug)
+			if err != nil {
+				return err
+			}
+			id, err := pg.CreateRelayNode(ctx, tenant.ID, hostname, ip, software)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "registered relay node %s (%s, ip %s)\n", id, hostname, ip)
+			return nil
+		},
+	}
+	add.Flags().StringVar(&tenantSlug, "tenant", "", "tenant slug")
+	add.Flags().StringVar(&hostname, "hostname", "", "relay FQDN")
+	add.Flags().StringVar(&ip, "ip", "", "primary outbound IP")
+	add.Flags().StringVar(&software, "software", "postfix", "relay software")
+	c.AddCommand(add)
+	return c
 }
 
 func userCmd(load func() (config.Config, error)) *cobra.Command {
