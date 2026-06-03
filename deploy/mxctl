@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+#
+# Host-side mxctl — a thin wrapper around the deployed MX Sentinel stack.
+#
+# The mxctl binary itself runs INSIDE the apid container (it talks to Postgres/NATS, not
+# Docker), so stack orchestration can't live there. This wrapper handles the orchestration
+# verbs on the host and passes everything else straight through to the in-container binary:
+#
+#   mxctl restart                      # restart the running stack (app + relay)
+#   mxctl logs [-f] [service...]       # tail stack logs
+#   mxctl ps                           # show stack status
+#   mxctl user set-password --tenant demo --email you@x --password ...   # -> in-container
+#   mxctl smtp-user create ...         # -> in-container
+#   mxctl <anything the binary supports>
+#
+# Install: deploy/install.sh symlinks this to /usr/local/bin/mxctl. You can also run it
+# directly (deploy/mxctl ...) or symlink it yourself.
+set -euo pipefail
+
+# Resolve this script's real location even when invoked via a symlink in PATH.
+src="${BASH_SOURCE[0]}"
+while [ -h "$src" ]; do
+	dir="$(cd -P "$(dirname "$src")" && pwd)"
+	src="$(readlink "$src")"
+	[ "${src#/}" = "$src" ] && src="$dir/$src" # relative symlink -> make absolute
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$src")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+BASE="$REPO_ROOT/deploy/docker-compose.yml"
+PROD="$REPO_ROOT/deploy/docker-compose.prod.yml"
+ENV_FILE="$REPO_ROOT/deploy/.env"
+
+# Match the profiles the installer deploys with: app always; relay when configured.
+profiles=(--profile app)
+if [ -f "$ENV_FILE" ] && grep -q '^RELAY_NODE_IP=..*' "$ENV_FILE"; then
+	profiles+=(--profile relay)
+fi
+
+# Use the prod overlay + env-file when a deployment exists; fall back to the base
+# (dev) stack otherwise.
+if [ -f "$ENV_FILE" ]; then
+	compose=(docker compose -f "$BASE" -f "$PROD" --env-file "$ENV_FILE" "${profiles[@]}")
+else
+	compose=(docker compose -f "$BASE" "${profiles[@]}")
+fi
+
+usage() {
+	sed -n '3,21p' "$src"
+}
+
+cmd="${1:-}"
+case "$cmd" in
+	restart)
+		# Single source of truth for the restart logic lives in install.sh.
+		exec bash "$REPO_ROOT/deploy/install.sh" --restart
+		;;
+	logs)
+		shift
+		exec "${compose[@]}" logs "$@"
+		;;
+	ps)
+		shift
+		exec "${compose[@]}" ps "$@"
+		;;
+	""|-h|--help|help)
+		usage
+		echo
+		echo "Stack commands (run on the host): restart | logs | ps"
+		echo "All other commands run inside the apid container:"
+		exec "${compose[@]}" run --rm -T apid /usr/local/bin/mxctl --help
+		;;
+	*)
+		exec "${compose[@]}" run --rm -T apid /usr/local/bin/mxctl "$@"
+		;;
+esac
