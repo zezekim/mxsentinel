@@ -99,8 +99,10 @@ endpoint/model are configured via `MXS_AI_*`.
 The REST API (`cmd/apid`, see [`docs/api-v1.md`](docs/api-v1.md)) makes the collected
 data queryable: domain health, DNS drift timeline, a message explorer over ClickHouse,
 and DMARC reports with alignment — all tenant-scoped via Bearer tokens. The **Next.js
-dashboard** in [`web/`](web/) renders those four screens; point it at the API with
-`NEXT_PUBLIC_API_TOKEN` (from `make apikey`).
+dashboard** in [`web/`](web/) renders those screens, plus **SMTP Users** (manage the
+relay's submission credentials) and **Settings** (SPF include endpoint, DKIM selector,
+DMARC defaults, relay host); point it at the API with `NEXT_PUBLIC_API_TOKEN` (from
+`make apikey`).
 
 Two signal producers are now implemented:
 
@@ -140,7 +142,9 @@ TLS, single domain), and bootstraps your tenant + owner login. Under the hood it
 prod overlay (`deploy/docker-compose.prod.yml`); all backing services stay on loopback and
 Caddy is the only public service. For the manual path and operations, see the full runbook
 [`docs/deploy-vps.md`](docs/deploy-vps.md) (and [`docs/deploy-relay.md`](docs/deploy-relay.md)
-for running Postfix on the same box).
+for running Postfix on the same box). To point a sending system (cPanel/Exim/Postfix/app)
+at the relay — creating SMTP submission users and the DNS to publish — see
+[`docs/smarthost.md`](docs/smarthost.md).
 
 ---
 

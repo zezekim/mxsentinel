@@ -359,6 +359,182 @@ table a:hover {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
+/* ── Section intro text ──────────────────────────────────────────────────── */
+
+.section-desc {
+  color: #555;
+  font-size: 0.9rem;
+  max-width: 70ch;
+  margin-bottom: 1.25rem;
+  line-height: 1.5;
+}
+
+.notice-banner {
+  background: #dcfce7;
+  color: #166534;
+  border: 1px solid #bbf7d0;
+  border-radius: 6px;
+  padding: 0.6rem 0.9rem;
+  font-size: 0.875rem;
+  margin-bottom: 1rem;
+}
+
+/* ── Inline table actions ────────────────────────────────────────────────── */
+
+.row-actions {
+  display: flex;
+  gap: 0.4rem;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.btn-sm {
+  padding: 0.3rem 0.6rem;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+  color: #1a1a2e;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.btn-sm:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+}
+
+.btn-sm-danger {
+  color: #991b1b;
+  border-color: #fecaca;
+}
+
+.btn-sm-danger:hover {
+  background: #fee2e2;
+  border-color: #f87171;
+}
+
+/* ── Settings form ───────────────────────────────────────────────────────── */
+
+.settings-form {
+  max-width: 640px;
+}
+
+.settings-group {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 1rem 1.25rem 1.25rem;
+  margin-bottom: 1.25rem;
+  background: #fff;
+}
+
+.settings-group legend {
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #64748b;
+  padding: 0 0.4rem;
+}
+
+.field {
+  margin-top: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.field label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #334155;
+}
+
+.field input,
+.field select {
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  padding: 0.45rem 0.6rem;
+  font-size: 0.9rem;
+  background: #fff;
+  color: #1a1a2e;
+  max-width: 420px;
+}
+
+.field input:focus,
+.field select:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+.field-hint {
+  font-size: 0.78rem;
+  color: #64748b;
+}
+
+.field-hint code,
+.settings-preview code {
+  background: #f1f5f9;
+  border-radius: 3px;
+  padding: 0.05em 0.35em;
+  font-size: 0.85em;
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.save-ok {
+  color: #166534;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+/* ── Settings guidance preview ───────────────────────────────────────────── */
+
+.settings-preview {
+  max-width: 640px;
+  margin-top: 1.75rem;
+  padding: 1rem 1.25rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.settings-preview h2 {
+  font-size: 0.95rem;
+  margin-bottom: 0.75rem;
+}
+
+.preview-item {
+  margin-bottom: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.preview-item:last-child {
+  margin-bottom: 0;
+}
+
+.preview-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #64748b;
+}
+
+.settings-preview code {
+  display: block;
+  word-break: break-all;
+  padding: 0.4rem 0.55rem;
+  font-size: 0.8rem;
+}
+
 /* ── Incidents expandable rows ───────────────────────────────────────────── */
 
 .incident-row-main {
