@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
@@ -60,13 +61,17 @@ func newRootCmd() *cobra.Command {
 func apikeyCmd(load func() (config.Config, error)) *cobra.Command {
 	c := &cobra.Command{Use: "apikey", Short: "Manage API credentials"}
 
-	var tenantSlug, name string
+	var tenantSlug, name, scopes string
 	create := &cobra.Command{
 		Use:   "create",
 		Short: "Create an API token for a tenant (printed once)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if tenantSlug == "" {
 				return fmt.Errorf("--tenant is required")
+			}
+			scopeList, err := parseScopes(scopes)
+			if err != nil {
+				return err
 			}
 			cfg, err := load()
 			if err != nil {
@@ -87,21 +92,46 @@ func apikeyCmd(load func() (config.Config, error)) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			id, err := pg.CreateAPICredential(ctx, tenant.ID, name, prefix, hash, []string{"read"})
+			id, err := pg.CreateAPICredential(ctx, tenant.ID, name, prefix, hash, scopeList)
 			if err != nil {
 				return err
 			}
 			out := cmd.OutOrStdout()
-			fmt.Fprintf(out, "created api credential %s for tenant %s\n", id, tenantSlug)
+			fmt.Fprintf(out, "created api credential %s for tenant %s (scopes: %v)\n", id, tenantSlug, scopeList)
 			fmt.Fprintf(out, "token (shown once, store it now):\n  %s\n", token)
 			return nil
 		},
 	}
 	create.Flags().StringVar(&tenantSlug, "tenant", "", "tenant slug (e.g. demo)")
 	create.Flags().StringVar(&name, "name", "dashboard", "credential name")
+	create.Flags().StringVar(&scopes, "scopes", "read", "comma-separated scopes: read,write,admin")
 
 	c.AddCommand(create)
 	return c
+}
+
+// parseScopes splits/validates a comma-separated scope list (read|write|admin).
+func parseScopes(s string) ([]string, error) {
+	valid := map[string]bool{api.ScopeRead: true, api.ScopeWrite: true, api.ScopeAdmin: true}
+	seen := map[string]bool{}
+	var out []string
+	for _, raw := range strings.Split(s, ",") {
+		sc := strings.TrimSpace(strings.ToLower(raw))
+		if sc == "" {
+			continue
+		}
+		if !valid[sc] {
+			return nil, fmt.Errorf("invalid scope %q (allowed: read, write, admin)", sc)
+		}
+		if !seen[sc] {
+			seen[sc] = true
+			out = append(out, sc)
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("at least one scope is required")
+	}
+	return out, nil
 }
 
 func versionCmd() *cobra.Command {

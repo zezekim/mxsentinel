@@ -106,8 +106,8 @@ run-apid: ## Run the REST API server on :8080
 	go run ./cmd/apid
 
 .PHONY: apikey
-apikey: ## Create an API token for the demo tenant (printed once)
-	go run ./cmd/mxctl apikey create --tenant demo
+apikey: ## Create a read+write API token for the demo tenant (printed once)
+	go run ./cmd/mxctl apikey create --tenant demo --scopes read,write
 
 .PHONY: web-dev
 web-dev: ## Run the Next.js dashboard dev server (needs NEXT_PUBLIC_API_TOKEN)

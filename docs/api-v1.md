@@ -11,9 +11,28 @@ Every `/v1` endpoint requires a Bearer token:
 Authorization: Bearer mxs_<prefix>_<secret>
 ```
 
-Create one with `mxctl apikey create --tenant <slug>` (the token is printed once). The
-token resolves to a tenant; **all queries are tenant-scoped** — a token for one tenant
-cannot read another tenant's data. Only a SHA-256 hash of the token is stored.
+Create one with `mxctl apikey create --tenant <slug> --scopes read,write` (the token is
+printed once). The token resolves to a tenant; **all queries are tenant-scoped** — a token
+for one tenant cannot read another tenant's data. Only a SHA-256 hash of the token is
+stored.
+
+### Scopes (RBAC)
+
+Tokens carry scopes; endpoints are gated by them (`admin` is a superset):
+
+| Scope | Grants |
+| --- | --- |
+| `read` | all `GET` endpoints |
+| `write` | mutating endpoints (`POST .../dns/recheck`, `POST /v1/incidents/{id}/resolve`) |
+| `admin` | everything |
+
+A call lacking the required scope returns **403** `{"error":{"code":"forbidden",...}}`.
+
+### `GET /v1/me`
+Returns the authenticated caller's tenant and scopes:
+```json
+{ "tenant_id": "uuid", "scopes": ["read", "write"] }
+```
 
 ## Errors
 
@@ -23,7 +42,7 @@ Non-2xx responses use:
 { "error": { "code": "not_found", "message": "domain not found" } }
 ```
 
-Codes: `unauthorized`, `invalid_token`, `not_found`, `inspect_failed`, `internal`.
+Codes: `unauthorized`, `invalid_token`, `forbidden`, `not_found`, `inspect_failed`, `internal`.
 
 ## Endpoints
 

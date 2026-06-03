@@ -34,16 +34,18 @@ func New(pg *pgstore.Store, ch *chstore.Store, resolver dnsx.Resolver, log *slog
 // Handler returns the fully-wired HTTP handler (routes + middleware).
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /v1/domains", s.handleListDomains)
-	mux.HandleFunc("GET /v1/domains/{id}/health", s.handleDomainHealth)
-	mux.HandleFunc("GET /v1/domains/{id}/dns/snapshots", s.handleSnapshots)
-	mux.HandleFunc("POST /v1/domains/{id}/dns/recheck", s.handleRecheck)
-	mux.HandleFunc("GET /v1/messages", s.handleMessages)
-	mux.HandleFunc("GET /v1/dmarc/reports", s.handleDMARCReports)
-	mux.HandleFunc("GET /v1/analytics/deliverability", s.handleDeliverability)
-	mux.HandleFunc("GET /v1/analytics/rejections", s.handleRejections)
-	mux.HandleFunc("GET /v1/incidents", s.handleListIncidents)
-	mux.HandleFunc("POST /v1/incidents/{id}/resolve", s.handleResolveIncident)
+	// Reads require the "read" scope; mutations require "write" (admin satisfies both).
+	mux.HandleFunc("GET /v1/me", s.requireScope(ScopeRead, s.handleMe))
+	mux.HandleFunc("GET /v1/domains", s.requireScope(ScopeRead, s.handleListDomains))
+	mux.HandleFunc("GET /v1/domains/{id}/health", s.requireScope(ScopeRead, s.handleDomainHealth))
+	mux.HandleFunc("GET /v1/domains/{id}/dns/snapshots", s.requireScope(ScopeRead, s.handleSnapshots))
+	mux.HandleFunc("POST /v1/domains/{id}/dns/recheck", s.requireScope(ScopeWrite, s.handleRecheck))
+	mux.HandleFunc("GET /v1/messages", s.requireScope(ScopeRead, s.handleMessages))
+	mux.HandleFunc("GET /v1/dmarc/reports", s.requireScope(ScopeRead, s.handleDMARCReports))
+	mux.HandleFunc("GET /v1/analytics/deliverability", s.requireScope(ScopeRead, s.handleDeliverability))
+	mux.HandleFunc("GET /v1/analytics/rejections", s.requireScope(ScopeRead, s.handleRejections))
+	mux.HandleFunc("GET /v1/incidents", s.requireScope(ScopeRead, s.handleListIncidents))
+	mux.HandleFunc("POST /v1/incidents/{id}/resolve", s.requireScope(ScopeWrite, s.handleResolveIncident))
 
 	// recoverer (outermost) → logger → cors (handles preflight) → auth → routes
 	return chain(mux, s.recoverer, s.requestLogger, s.cors, s.requireAuth)
