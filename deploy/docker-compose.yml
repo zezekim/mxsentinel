@@ -42,6 +42,10 @@ x-app: &app
   image: mxsentinel:local
   profiles: ["app"]
   environment: *app-env
+  # Let containers reach a host-run service (e.g. Ollama) via host.docker.internal on
+  # Linux too (already works on Docker Desktop). Harmless when unused.
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
 
 services:
   postgres:
