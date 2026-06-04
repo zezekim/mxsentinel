@@ -60,8 +60,11 @@ func run() error {
 		_ = srv.Shutdown(sctx)
 	}()
 
-	ch, err := chstore.New(ctx, cfg.ClickHouse)
-	if err != nil {
+	var ch *chstore.Store
+	if err := obs.Retry(ctx, log, "clickhouse", 20, 3*time.Second, func() (e error) {
+		ch, e = chstore.New(ctx, cfg.ClickHouse)
+		return
+	}); err != nil {
 		return err
 	}
 	defer ch.Close()
@@ -70,8 +73,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	bus, err := events.Connect(cfg.NATS.URL, "ingestd", validator, log)
-	if err != nil {
+	var bus *events.Bus
+	if err := obs.Retry(ctx, log, "nats", 20, 3*time.Second, func() (e error) {
+		bus, e = events.Connect(cfg.NATS.URL, "ingestd", validator, log)
+		return
+	}); err != nil {
 		return err
 	}
 	defer bus.Close()

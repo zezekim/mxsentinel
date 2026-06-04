@@ -11,7 +11,7 @@ import (
 // the "mail" key of the tenants.settings JSONB column, so other settings (present or
 // future) are preserved by read-modify-write.
 type MailSettings struct {
-	SPFInclude   string `json:"spf_include"`   // SPF include host advertised to senders, e.g. spf.squidix.net
+	SPFInclude   string `json:"spf_include"`   // SPF include host advertised to senders, e.g. spf.example.net
 	DKIMSelector string `json:"dkim_selector"` // default DKIM selector used in setup guidance, e.g. mxs
 	DMARCPolicy  string `json:"dmarc_policy"`  // none | quarantine | reject
 	DMARCRua     string `json:"dmarc_rua"`     // aggregate report address (rua=mailto:…)
