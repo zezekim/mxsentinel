@@ -88,6 +88,21 @@ func TestParseCapturesSASLUsername(t *testing.T) {
 	}
 }
 
+func TestParseRotationTransportTag(t *testing.T) {
+	// With outbound IP rotation, the smtp client logs under a multi-segment tag like
+	// "postfix/smtp-ip3/smtp" (syslog_name=postfix/smtp-ip3). The parser must still match it.
+	p := newParser()
+	evs := feed(p,
+		"Jun  3 10:00:01 mail postfix/smtp-ip3/smtp[1240]: 9A1BC2D3: to=<user@gmail.com>, relay=gmail-smtp-in.l.google.com[142.250.1.2]:25, dsn=2.0.0, status=sent (250 2.0.0 OK)",
+	)
+	if len(evs) != 1 {
+		t.Fatalf("expected 1 event from a rotation-transport line, got %d", len(evs))
+	}
+	if evs[0].Payload.Outcome != "delivered" {
+		t.Errorf("outcome = %q, want delivered", evs[0].Payload.Outcome)
+	}
+}
+
 func TestParseBouncedHard(t *testing.T) {
 	p := newParser()
 	evs := feed(p,
