@@ -233,7 +233,9 @@ services:
   telemetryd:
     <<: *app
     profiles: ["relay"]
-    command: ["/usr/local/bin/telemetryd", "--follow", "/maillog", "--node-ip", "${RELAY_NODE_IP:-}", "--fallback-tenant-slug", "${MXS_FALLBACK_TENANT_SLUG:-}"]
+    # Follow the maillog by its real host path (the log directory is mounted below, not the
+    # single file) so telemetryd can reopen it after logrotate/postlogd replaces the inode.
+    command: ["/usr/local/bin/telemetryd", "--follow", "${MAILLOG_PATH:-/var/log/mail.log}", "--node-ip", "${RELAY_NODE_IP:-}", "--fallback-tenant-slug", "${MXS_FALLBACK_TENANT_SLUG:-}"]
     # The host maillog is 0640 root:adm; join the adm group (GID 4 on Debian/Ubuntu) so the
     # container can read it without making the log world-readable. If `getent group adm`
     # shows a different GID on your host, change this to match.
@@ -242,7 +244,10 @@ services:
       <<: *app-env
       MXS_TELEMETRY_HASHKEY: "${MXS_TELEMETRY_HASHKEY:-}"
     volumes:
-      - "${MAILLOG_PATH:-/var/log/mail.log}:/maillog:ro"
+      # Mount the log's DIRECTORY (read-only), not the single file — a single-file bind mount
+      # pins one inode, so a rotated log becomes invisible. The dir mount lets telemetryd
+      # reopen the current file by path.
+      - "${MAILLOG_DIR:-/var/log}:${MAILLOG_DIR:-/var/log}:ro"
     depends_on:
       migrate: {condition: service_completed_successfully}
       nats: {condition: service_healthy}

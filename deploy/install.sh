@@ -170,6 +170,7 @@ MXS_AI_MODEL=$AI_MODEL
 RELAY_NODE_IP=$RELAY_NODE_IP
 MAIL_DOMAIN=$MAIL_DOMAIN
 MAILLOG_PATH=$MAILLOG_PATH
+MAILLOG_DIR=$(dirname "$MAILLOG_PATH")
 MXS_TELEMETRY_HASHKEY=$MXS_TELEMETRY_HASHKEY
 # Attribute relay mail from un-registered sending domains to this tenant (so a shared
 # hosting relay captures all telemetry without registering every client domain).
