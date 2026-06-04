@@ -5,6 +5,7 @@
 #     sudo bash deploy/install.sh                    # full provision + deploy
 #     bash deploy/install.sh --app-only              # skip OS provisioning (Docker etc. already present)
 #     sudo bash deploy/install.sh --wire-relay-sasl  # (re-)wire relay SASL on an existing box, then exit
+#     sudo bash deploy/install.sh --wire-relay-spam  # (re-)install rspamd + ClamAV outbound filtering, then exit
 #     bash deploy/install.sh --restart               # restart the running stack, then exit
 #
 # It installs every dependency (Docker, optionally Ollama, optionally Postfix+OpenDKIM),
@@ -19,13 +20,15 @@ set -euo pipefail
 
 APP_ONLY=0
 WIRE_RELAY_SASL=0
+WIRE_RELAY_SPAM=0
 RESTART_ONLY=0
 for arg in "$@"; do
 	case "$arg" in
 		--app-only) APP_ONLY=1 ;;
 		--wire-relay-sasl) WIRE_RELAY_SASL=1 ;;
+		--wire-relay-spam) WIRE_RELAY_SPAM=1 ;;
 		--restart) RESTART_ONLY=1 ;;
-		-h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+		-h|--help) sed -n '2,18p' "$0"; exit 0 ;;
 		*) echo "unknown flag: $arg" >&2; exit 2 ;;
 	esac
 done
@@ -81,10 +84,10 @@ fi
 have openssl || die "openssl not found"
 
 # ---- collect settings ------------------------------------------------------
-# Skipped for --wire-relay-sasl and --restart: those are focused maintenance runs, not a
-# deploy, so they neither prompt nor write deploy/.env.
+# Skipped for the focused maintenance runs (--wire-relay-sasl/--wire-relay-spam/--restart):
+# they don't deploy, so they neither prompt nor write deploy/.env.
 REUSE_ENV=0
-if [ "$WIRE_RELAY_SASL" -eq 0 ] && [ "$RESTART_ONLY" -eq 0 ]; then
+if [ "$WIRE_RELAY_SASL" -eq 0 ] && [ "$WIRE_RELAY_SPAM" -eq 0 ] && [ "$RESTART_ONLY" -eq 0 ]; then
 if [ -f "$ENV_FILE" ]; then
 	if yesno "$ENV_FILE exists. Reuse it and just (re)deploy?" y; then
 		REUSE_ENV=1
@@ -326,6 +329,105 @@ EOF
 	info "Submission uses the default (snakeoil) TLS cert — install a real cert for production (see docs/smarthost.md)"
 }
 
+provision_spam() {
+	# Outbound abuse controls: rspamd (spam scoring + per-authenticated-user rate caps) and
+	# ClamAV (malware), chained as Postfix milters after OpenDKIM. This relay only carries
+	# outbound/authenticated mail, so every message is scanned on the way out — one
+	# compromised SMTP user can't quietly blast the shared IP pool into a blocklist.
+	bold "Installing rspamd + ClamAV (outbound spam/malware filtering)…"
+	apt_install rspamd clamav clamav-daemon clamav-milter
+
+	# --- rspamd: scan outbound mail via the proxy worker in self-scan (milter) mode ---
+	mkdir -p /etc/rspamd/local.d
+	cat > /etc/rspamd/local.d/worker-proxy.inc <<'EOF'
+milter = yes;
+timeout = 120s;
+upstream "local" {
+  default = yes;
+  self_scan = yes;
+}
+EOF
+	# Reuse the app stack's loopback Redis for ratelimit/stats; isolate on db 1.
+	cat > /etc/rspamd/local.d/redis.conf <<'EOF'
+servers = "127.0.0.1:6379";
+db = "1";
+EOF
+	# Reject clear spam outright (all traffic here is outbound/authenticated).
+	cat > /etc/rspamd/local.d/actions.conf <<'EOF'
+reject = 15;
+add_header = 8;
+greylist = null;
+EOF
+	# Per-authenticated-user send caps — the core "one account can't blast" control. The
+	# "user" selector is only set for authenticated mail, so these buckets apply per SMTP
+	# login and don't touch unauthenticated/local traffic.
+	cat > /etc/rspamd/local.d/ratelimit.conf <<'EOF'
+rates {
+  user_hourly {
+    selector = "user";
+    bucket = {
+      burst = 200;
+      rate = "200 / 1h";
+    }
+  }
+  user_daily {
+    selector = "user";
+    bucket = {
+      burst = 1000;
+      rate = "1000 / 1d";
+    }
+  }
+}
+EOF
+	cat > /etc/rspamd/local.d/options.inc <<'EOF'
+local_addrs = "127.0.0.0/8, ::1";
+EOF
+	systemctl enable rspamd >/dev/null 2>&1 || true
+	systemctl restart rspamd || warn "rspamd restart failed — check 'journalctl -u rspamd'"
+
+	# --- ClamAV milter: reject mail carrying malware ---
+	cp -n /etc/clamav/clamav-milter.conf "/etc/clamav/clamav-milter.conf.bak.$(date +%s)" 2>/dev/null || true
+	cat > /etc/clamav/clamav-milter.conf <<'EOF'
+MilterSocket inet:7357@localhost
+FixStaleSocket true
+User clamav
+ClamdSocket unix:/var/run/clamav/clamd.ctl
+OnInfected Reject
+OnFail Defer
+AddHeader Replace
+LogSyslog true
+EOF
+	# Pull signatures before starting clamd (it won't start with an empty DB). freshclam
+	# can't run while its service holds the lock, so stop it for the one-shot update.
+	systemctl stop clamav-freshclam >/dev/null 2>&1 || true
+	bold "Downloading ClamAV signatures (first run can take a few minutes)…"
+	freshclam --quiet || warn "freshclam update failed — clamav-daemon will retry on its timer"
+	systemctl enable clamav-freshclam clamav-daemon clamav-milter >/dev/null 2>&1 || true
+	systemctl start clamav-freshclam >/dev/null 2>&1 || true
+	systemctl restart clamav-daemon >/dev/null 2>&1 || warn "clamav-daemon not up yet (signatures still downloading) — it will start automatically"
+	systemctl restart clamav-milter >/dev/null 2>&1 || true
+
+	# --- Postfix: chain the milters (OpenDKIM -> rspamd -> ClamAV) + per-client caps ---
+	# milter_default_action=accept (set in provision_postfix) keeps mail flowing if a
+	# milter is down — availability over a hard block on the relay.
+	#
+	# These caps are per *client IP* (the smarthost's address), so they're a coarse runaway
+	# backstop, deliberately generous — a busy cPanel box shouldn't be throttled. Real
+	# per-account limits are rspamd's job (keyed by SASL user). They cause 4xx deferrals
+	# (retried), not bounces. Raise them if a legitimate smarthost gets deferred.
+	postconf -e \
+		"smtpd_milters = inet:localhost:8891, inet:localhost:11332, inet:localhost:7357" \
+		"non_smtpd_milters = inet:localhost:8891, inet:localhost:11332, inet:localhost:7357" \
+		"smtpd_client_message_rate_limit = 600" \
+		"smtpd_client_recipient_rate_limit = 2000" \
+		"smtpd_client_connection_rate_limit = 100" \
+		"smtpd_recipient_limit = 200" \
+		"anvil_rate_time_unit = 60s"
+	systemctl restart postfix
+	info "Outbound filtering on: rspamd (spam + per-user rate caps) + ClamAV (malware), chained after OpenDKIM"
+	info "Per-user caps default to 200/hour and 1000/day — tune /etc/rspamd/local.d/ratelimit.conf"
+}
+
 provision_firewall() {
 	have ufw || return 0
 	bold "Configuring firewall (ufw)…"
@@ -360,6 +462,18 @@ if [ "$WIRE_RELAY_SASL" -eq 1 ]; then
 	exit 0
 fi
 
+# Focused maintenance path: (re-)install rspamd + ClamAV outbound filtering on an existing
+# relay box, then exit. Idempotent — safe to re-run (e.g. to retune after editing configs).
+if [ "$WIRE_RELAY_SPAM" -eq 1 ]; then
+	[ "$(id -u)" -eq 0 ] || die "--wire-relay-spam needs root — run: sudo bash deploy/install.sh --wire-relay-spam"
+	is_debian || die "--wire-relay-spam supports Debian/Ubuntu (it installs rspamd/clamav via apt)"
+	have postconf || die "Postfix not found on this host — provision the relay first (full install, without --wire-relay-spam)"
+	provision_spam
+	bold "Done ✓ — outbound spam/malware filtering wired"
+	info "Test it: GTUBE string (spam) and the EICAR test file (malware) should be rejected — see docs/deploy-relay.md §9.8"
+	exit 0
+fi
+
 # Focused maintenance path: restart the running stack (no provisioning, no rebuild), then
 # exit. Restarts the app profile, plus relay (telemetryd) when this box runs the relay.
 if [ "$RESTART_ONLY" -eq 1 ]; then
@@ -386,6 +500,7 @@ if [ "$APP_ONLY" -eq 0 ] && [ "$REUSE_ENV" -eq 0 ]; then
 	{ [ "${AI_LOCAL:-0}" -eq 1 ] && [ -n "${AI_MODEL:-}" ]; } && provision_ollama
 	[ "${RELAY:-0}" -eq 1 ] && provision_postfix
 	[ "${RELAY:-0}" -eq 1 ] && provision_dovecot
+	[ "${RELAY:-0}" -eq 1 ] && provision_spam
 	provision_firewall
 else
 	have docker || die "Docker is required (run without --app-only on a fresh box to auto-install it)"
@@ -491,6 +606,7 @@ if [ "${RELAY:-0}" -eq 1 ] && [ "$APP_ONLY" -eq 0 ] && [ "$REUSE_ENV" -eq 0 ]; t
 	info "Smarthost submission endpoint: $DOMAIN:587 (STARTTLS, AUTH PLAIN/LOGIN)."
 	info "Manage SMTP submission users in the dashboard (SMTP Users) or: mxctl smtp-user create …"
 	info "Smarthost client setup (cPanel/Exim/Postfix/apps): see docs/smarthost.md."
+	info "Outbound spam/malware filtering (rspamd + ClamAV) is on; per-user caps in /etc/rspamd/local.d/ratelimit.conf."
 	info "Multi-IP sender pools and warmup: see docs/deploy-relay.md."
 fi
 
@@ -499,4 +615,10 @@ fi
 if [ "${RELAY:-0}" -eq 1 ] && [ ! -f /etc/dovecot/dovecot-sql.conf.ext ]; then
 	warn "Relay SASL is not wired on this host yet — SMTP submission users cannot authenticate."
 	warn "Wire it (idempotent, no redeploy): sudo bash deploy/install.sh --wire-relay-sasl"
+fi
+
+# Relay on this host but outbound spam filtering not wired — surface the one-shot fix.
+if [ "${RELAY:-0}" -eq 1 ] && ! have rspamd; then
+	warn "Outbound spam/malware filtering is not installed on this host yet."
+	warn "Install it (idempotent, no redeploy): sudo bash deploy/install.sh --wire-relay-spam"
 fi
