@@ -82,7 +82,7 @@ export default function SettingsPage() {
               <input
                 id="spf_include"
                 type="text"
-                placeholder="spf.squidix.net"
+                placeholder="spf.example.net"
                 value={form.spf_include}
                 onChange={(e) => set("spf_include", e.target.value)}
               />

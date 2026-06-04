@@ -81,10 +81,10 @@ records to publish.
 
 - **SPF** — authorize the relay for your envelope-sender domain. If your relay provider
   publishes a managed SPF include (configured as the **SPF include endpoint** in Settings,
-  e.g. `spf.squidix.net`):
+  e.g. `spf.example.net`):
 
   ```
-  example.com.  IN TXT  "v=spf1 include:spf.squidix.net ~all"
+  example.com.  IN TXT  "v=spf1 include:spf.example.net ~all"
   ```
 
   If you instead list the relay IPs directly, prefer flat `ip4:` mechanisms to stay under

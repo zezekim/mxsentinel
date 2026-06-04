@@ -79,8 +79,11 @@ func run(o runOpts) error {
 	if err != nil {
 		return err
 	}
-	bus, err := events.Connect(cfg.NATS.URL, "telemetryd", validator, log)
-	if err != nil {
+	var bus *events.Bus
+	if err := obs.Retry(ctx, log, "nats", 20, 3*time.Second, func() (e error) {
+		bus, e = events.Connect(cfg.NATS.URL, "telemetryd", validator, log)
+		return
+	}); err != nil {
 		return err
 	}
 	defer bus.Close()
@@ -88,8 +91,11 @@ func run(o runOpts) error {
 		return err
 	}
 
-	resolver, err := buildResolver(ctx, o, cfg, log)
-	if err != nil {
+	var resolver tenantResolver
+	if err := obs.Retry(ctx, log, "postgres", 20, 3*time.Second, func() (e error) {
+		resolver, e = buildResolver(ctx, o, cfg, log)
+		return
+	}); err != nil {
 		return err
 	}
 	defer resolver.Close()
