@@ -855,3 +855,61 @@ smtpd_tls_key_file  = /etc/letsencrypt/live/relay.example.com/privkey.pem
 ```
 
 Certbot auto-renews via systemd timer — no manual intervention needed.
+
+### 9.8 Outbound spam & malware filtering
+
+A shared-IP relay's biggest risk is a compromised or abusive customer account blasting
+spam and dragging the whole pool onto a blocklist. `deploy/install.sh` (relay mode)
+installs two Postfix milters, chained **after** OpenDKIM, so every outbound message is
+scanned on the way out:
+
+- **rspamd** — content scoring plus **per-authenticated-user rate limiting**. Clear spam
+  (score ≥ 15, incl. the GTUBE test) is rejected; each SASL user is capped (default
+  **200/hour, 1000/day**). It uses the stack's loopback Redis (`127.0.0.1:6379`, db 1).
+- **ClamAV** — `clamav-milter` rejects mail carrying malware (`OnInfected Reject`).
+
+The resulting chain is `smtpd_milters = OpenDKIM(8891), rspamd(11332), ClamAV(7357)`.
+`milter_default_action = accept` means if a milter is down the relay keeps sending
+(availability over a hard block) — monitor the milters so an outage isn't silent.
+
+Install or retune on an existing relay (idempotent, no redeploy):
+
+```bash
+sudo bash deploy/install.sh --wire-relay-spam
+```
+
+**Tuning the per-user caps** — edit `/etc/rspamd/local.d/ratelimit.conf` and
+`sudo systemctl reload rspamd`. The `reject`/`add_header` thresholds live in
+`/etc/rspamd/local.d/actions.conf`.
+
+#### Verify it works
+
+Authenticate as a real SMTP user and send the two standard test payloads — both should be
+**rejected with a 5xx** at submission:
+
+```bash
+# Spam (GTUBE) — rspamd rejects:
+swaks --to probe@example.net --from mailer@send.example.com \
+  --server relay.example.com --port 587 --tls \
+  --auth LOGIN --auth-user mailer@send.example.com --auth-password '<password>' \
+  --header "Subject: gtube test" \
+  --body 'XJS*C4JDBQADN1.NSBN3*2IDNEN*GTUBE-STANDARD-ANTI-UBE-TEST-EMAIL*C.34X'
+
+# Malware (EICAR) — ClamAV rejects:
+swaks --to probe@example.net --from mailer@send.example.com \
+  --server relay.example.com --port 587 --tls \
+  --auth LOGIN --auth-user mailer@send.example.com --auth-password '<password>' \
+  --attach-type text/plain --attach - \
+  --body 'eicar test' <<<'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*'
+```
+
+Check the rejections and rspamd's verdict:
+
+```bash
+grep -E 'milter-reject|rspamd|clamav' /var/log/mail.log | tail
+rspamc stat            # rspamd counters
+journalctl -u clamav-milter -n 20
+```
+
+A normal (non-spam) test message from the same user should still deliver — confirm you
+haven't set the thresholds so tight that legitimate mail is caught.
