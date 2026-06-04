@@ -13,10 +13,11 @@ The system follows one pipeline end to end:
 Collect → Normalize → Correlate → Analyze → Explain → Remediate
 ```
 
-> **Status:** Foundation phase. This repository currently contains **design docs,
-> data schemas, and event contracts only** — no application code yet. The chosen
-> implementation language for application services is **Go**. See
-> [`docs/tech-stack.md`](docs/tech-stack.md).
+> **Status:** Implemented. Phases 1–3 are built — relay telemetry, DNS intelligence,
+> DMARC ingestion, correlation, reputation, incidents, and local-AI diagnostics — running
+> as a Go service mesh behind a Next.js dashboard, with a one-command VPS installer. Phase
+> 4 work has begun: RBAC, a public REST API, SMTP relay/submission-user management, and
+> tenant settings already ship. Stack: [`docs/tech-stack.md`](docs/tech-stack.md).
 
 ---
 
@@ -29,9 +30,15 @@ Collect → Normalize → Correlate → Analyze → Explain → Remediate
 | [`docs/phase-1-plan.md`](docs/phase-1-plan.md) | Detailed Phase 1 (Foundation) plan: workstreams, milestones, acceptance criteria. |
 | [`docs/data-model.md`](docs/data-model.md) | Storage architecture: what lives in Postgres vs ClickHouse vs Redis vs object storage, and why. |
 | [`docs/event-contracts.md`](docs/event-contracts.md) | Event streaming design: NATS subject hierarchy, the common event envelope, delivery semantics. |
-| [`schemas/postgres/`](schemas/postgres/) | PostgreSQL DDL — tenants, domains, users, DNS snapshots, alert rules, configuration. |
+| [`schemas/postgres/`](schemas/postgres/) | PostgreSQL DDL — tenants, domains, users, SMTP submission users, DNS snapshots, alert rules, configuration. |
 | [`schemas/clickhouse/`](schemas/clickhouse/) | ClickHouse DDL — SMTP telemetry events and analytics rollups. |
 | [`schemas/events/`](schemas/events/) | JSON Schema contracts for every event family published to the bus. |
+| [`cmd/`](cmd/) | Service entrypoints: `apid` (REST API), `dnsd`, `telemetryd`, `dmarcd`, `correld`, `repd`, `incidentd`, `aid`, and the `mxctl` operator CLI. |
+| [`internal/`](internal/) | Implementation packages: `api`, `dns`, `telemetry`, `dmarc`, `correlate`, `reputation`, `ai`, `auth`, `config`, `store/*`. |
+| [`web/`](web/) | Next.js dashboard (domains, messages, DMARC, incidents, SMTP users, settings, account). |
+| [`deploy/`](deploy/) | Docker Compose stack, Caddy, the [`install.sh`](deploy/install.sh) installer, and the host [`mxctl`](deploy/mxctl) wrapper. |
+| [`docs/api-v1.md`](docs/api-v1.md) | REST API reference (auth, scopes, every `/v1` endpoint). |
+| [`docs/deploy-vps.md`](docs/deploy-vps.md) · [`docs/deploy-relay.md`](docs/deploy-relay.md) · [`docs/smarthost.md`](docs/smarthost.md) | VPS runbook, Postfix relay setup, and smarthost client configuration. |
 
 ---
 
@@ -55,7 +62,7 @@ Collect → Normalize → Correlate → Analyze → Explain → Remediate
 | **1 — Foundation** *(complete)* | Get data flowing | Relay telemetry, DNS validator, DMARC ingestion, Postgres schema, dashboard MVP. |
 | **2 — Intelligence** *(complete)* | Make data mean something | Correlation engine, provider analytics, rejection analysis, reputation tracking. |
 | **3 — AI Diagnostics** *(current)* | Explain & recommend | Root-cause analysis, anomaly detection, remediation recommendations. |
-| **4 — Enterprise** | Scale & isolate | HA relay clusters, RBAC, public APIs, multi-region, tenant federation. |
+| **4 — Enterprise** *(in progress)* | Scale & isolate | RBAC, public REST API, and SMTP relay/submission management ship today; HA relay clusters, multi-region, and tenant federation remain. |
 
 Phase 1 is fully specified in [`docs/phase-1-plan.md`](docs/phase-1-plan.md).
 
@@ -73,10 +80,11 @@ make bus-ensure    # create/update JetStream streams
 make selftest      # publish + read back one of each event family
 make run-dnsd      # DNS Intelligence validator: snapshot monitored domains, emit events
 make replay        # replay a sample Postfix maillog into the bus as smtp.* events
-make run-apid      # REST API on :8080 (domain health, messages, DMARC)
+make run-apid      # REST API on :8080 (domain health, messages, DMARC, users, SMTP users, settings)
 make apikey        # mint an API token for the demo tenant (printed once)
 make web-dev       # Next.js dashboard dev server (web/) -> http://localhost:3000
 make test          # unit tests (no services needed)
+make restart       # restart the running dev stack
 # or: make bootstrap   # up + migrate + bus-ensure in one shot
 ```
 
@@ -100,11 +108,21 @@ The REST API (`cmd/apid`, see [`docs/api-v1.md`](docs/api-v1.md)) makes the coll
 data queryable: domain health, DNS drift timeline, a message explorer over ClickHouse,
 and DMARC reports with alignment — all tenant-scoped via Bearer tokens. The **Next.js
 dashboard** in [`web/`](web/) renders those screens, plus **SMTP Users** (manage the
-relay's submission credentials) and **Settings** (SPF include endpoint, DKIM selector,
-DMARC defaults, relay host); point it at the API with `NEXT_PUBLIC_API_TOKEN` (from
-`make apikey`).
+relay's submission credentials), **Settings** (SPF include endpoint, DKIM selector, DMARC
+defaults, relay host, and the DNS resolver used for validation), and **Account**
+(self-service password change). Point it at the API with `NEXT_PUBLIC_API_TOKEN` (from
+`make apikey`), or just log in.
 
-Two signal producers are now implemented:
+**Outbound relay management.** Beyond observing mail, the optional on-box Postfix relay is
+managed from the same control plane. SMTP submission users (the SASL credentials a
+smarthost authenticates with) are created in the dashboard or via `mxctl smtp-user` and
+authenticated by the relay through Dovecot's Postgres passdb — no flat password files. The
+DNS resolver, SPF-include endpoint, and DMARC/DKIM defaults are tenant settings that feed
+both validation and the generated setup guidance. See
+[`docs/smarthost.md`](docs/smarthost.md) for pointing cPanel/Exim/Postfix/apps at the
+relay.
+
+Three signal producers are now implemented:
 
 - **`cmd/dnsd`** — polls monitored domains, validates SPF/DKIM/DMARC/MX, writes a new
   `dns_snapshots` row only when the posture changes, and publishes `dns.changed` /
