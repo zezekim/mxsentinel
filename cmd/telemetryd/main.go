@@ -208,15 +208,22 @@ func (c *collector) drainOnce(ctx context.Context) {
 }
 
 // followFile tails a file, reading newly appended complete lines until ctx is cancelled.
+// followFile tails a maillog with `tail -F` semantics: it reads newly appended lines and
+// reopens the file when it is rotated or truncated. This matters because logrotate (and
+// Postfix's postlogd on reload) replaces the log with a new inode — a plain tail of the
+// original handle would then silently read nothing. For this to work the log's *directory*
+// must be mounted into the container (not the single file), so reopening the path resolves
+// the new inode (see deploy/docker-compose.yml).
 func (c *collector) followFile(ctx context.Context, path string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { f.Close() }()
 	if _, err := f.Seek(0, io.SeekEnd); err != nil {
 		return err
 	}
+	openFI, _ := f.Stat()
 	reader := bufio.NewReader(f)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -241,6 +248,25 @@ func (c *collector) followFile(ctx context.Context, path string) error {
 				for _, ev := range c.parser.Parse(full) {
 					c.handle(ctx, ev)
 				}
+			}
+			// Rotation/truncation check: if the path now points at a different file, or the
+			// file shrank below our read offset, reopen and read the new file from the start.
+			st, serr := os.Stat(path)
+			if serr != nil {
+				continue // file briefly absent mid-rotation; retry next tick
+			}
+			pos, _ := f.Seek(0, io.SeekCurrent)
+			if (openFI != nil && !os.SameFile(openFI, st)) || st.Size() < pos {
+				nf, oerr := os.Open(path)
+				if oerr != nil {
+					continue
+				}
+				f.Close()
+				f = nf
+				openFI, _ = f.Stat()
+				reader = bufio.NewReader(f)
+				partial = ""
+				c.log.Info("maillog rotated; reopened", "file", path)
 			}
 		}
 	}
