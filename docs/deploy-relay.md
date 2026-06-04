@@ -948,3 +948,57 @@ Thresholds are flags on the daemon (defaults shown):
 the bus, not the maillog directly). Re-enable a cleared account from the dashboard (SMTP
 Users → Enable) or `psql`. Tune thresholds by editing the `abused` service command in
 `deploy/docker-compose.yml`, e.g. `["/usr/local/bin/abused","--abuse-count","15"]`.
+
+### 9.10 Telemetry not appearing in the Message Explorer
+
+The path is `telemetryd` (tails the maillog) → bus → `ingestd` → ClickHouse → Explorer. Two
+common breaks:
+
+- **`telemetryd: open /maillog: permission denied`** — the host maillog is `0640 root:adm`
+  and the container isn't in the `adm` group. The compose `telemetryd` service sets
+  `group_add: ["4"]` (adm on Debian/Ubuntu) to fix this without making the log
+  world-readable. If `getent group adm` shows a different GID, change it to match and
+  recreate the container. Quick one-off check: `chmod 0644 /var/log/mail.log` (resets on
+  logrotate — the `group_add` is the durable fix).
+- **Events silently dropped** — `telemetryd` attributes each message to a tenant by its
+  **From domain** and drops mail from domains it doesn't know (`no tenant for sending
+  domain` in its logs). Register each sending domain with `mxctl domain add` (§10).
+
+On a `compose restart`, daemons can momentarily start before NATS is resolvable
+(`lookup nats … no such host`); the services carry `restart: unless-stopped` so they
+self-heal — if one is stuck down, `… up -d` brings it back respecting dependencies.
+
+---
+
+## 10. Shared-hosting: onboarding a client domain
+
+For a shared web/email-hosting relay, clients send **person-to-person** mail **From their
+own domains** (`user@clientdomain.com`) through this relay — not marketing blasts. cPanel
+(Exim) already **DKIM-signs** each client's mail with that client's own domain key and
+publishes the key in the client's DNS. So the relay's job is simply to **pass that
+signature through unmodified** — it does **not** sign client domains (OpenDKIM only signs
+the relay's own `MAIL_DOMAIN`, leaving other domains' signatures intact). Don't enable
+anything that rewrites signed content (e.g. subject rewriting) or you'll break the
+pass-through signature; rspamd here only *adds* headers, which is DKIM-safe.
+
+Because DMARC passes on aligned SPF **or** aligned DKIM, cPanel's aligned DKIM alone gets a
+client domain to `dmarc=pass`. So onboarding a client is just:
+
+```bash
+# Register the domain (telemetry attribution + dnsd monitoring) and print the records:
+mxctl domain add --tenant <slug> --name clientdomain.com
+```
+
+That prints the **SPF** and **DMARC** records to hand the client. DKIM is already handled by
+cPanel — nothing to do on the relay. Recommended client records:
+
+- **SPF** (TXT `@`): add the relay so SPF also passes/aligns —
+  `v=spf1 include:spf.example.net ~all` (or `ip4:<relay-ip>`). Not strictly required when
+  DKIM passes, but it avoids SPF-fail penalties.
+- **DMARC** (TXT `_dmarc`): `v=DMARC1; p=none; rua=mailto:dmarc@…` — start at `p=none`,
+  tighten later.
+- **DKIM**: none on the relay — cPanel signs and publishes the client's key.
+
+Verify a client's first send the same way as §8/§9.8: check `dkim=pass header.d=clientdomain.com`
+and `dmarc=pass` in the receiver's `Authentication-Results`, and watch the message in the
+Message Explorer (filter by the client's SMTP user).

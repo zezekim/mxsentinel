@@ -57,6 +57,7 @@ func newRootCmd() *cobra.Command {
 		apikeyCmd(loadCfg),
 		userCmd(loadCfg),
 		smtpUserCmd(loadCfg),
+		domainCmd(loadCfg),
 		ipPoolCmd(loadCfg),
 		relayNodeCmd(loadCfg),
 		tenantCmd(loadCfg),
@@ -408,6 +409,104 @@ func smtpUserCmd(load func() (config.Config, error)) *cobra.Command {
 	del.Flags().StringVar(&delUsername, "username", "", "SASL login to delete")
 
 	c.AddCommand(create, list, del)
+	return c
+}
+
+func domainCmd(load func() (config.Config, error)) *cobra.Command {
+	c := &cobra.Command{Use: "domain", Short: "Manage sending domains (telemetry attribution + DNS monitoring)"}
+
+	var tenantSlug, name string
+	add := &cobra.Command{
+		Use:   "add",
+		Short: "Register a sending domain and print the DNS records to publish",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if tenantSlug == "" || name == "" {
+				return fmt.Errorf("--tenant and --name are required")
+			}
+			cfg, err := load()
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			pg, err := pgstore.New(ctx, cfg.Postgres)
+			if err != nil {
+				return err
+			}
+			defer pg.Close()
+			tenant, err := pg.GetTenantBySlug(ctx, tenantSlug)
+			if err != nil {
+				return err
+			}
+			id, err := pg.CreateDomain(ctx, tenant.ID, name)
+			if err != nil {
+				return err
+			}
+			ms, _ := pg.GetMailSettings(ctx, tenant.ID)
+
+			spf := "v=spf1 ip4:<your-relay-ip> ~all"
+			if ms.SPFInclude != "" {
+				spf = fmt.Sprintf("v=spf1 include:%s ~all", ms.SPFInclude)
+			}
+			policy := ms.DMARCPolicy
+			if policy == "" {
+				policy = "none"
+			}
+			dmarc := "v=DMARC1; p=" + policy
+			if ms.DMARCRua != "" {
+				dmarc += "; rua=mailto:" + ms.DMARCRua
+			}
+
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "registered domain %s (%s) in tenant %s\n", id, name, tenantSlug)
+			fmt.Fprintln(out, "\nPublish for this domain (cPanel/Exim already signs + publishes DKIM — nothing to do for DKIM here):")
+			fmt.Fprintf(out, "  SPF    TXT  %-26s %s\n", name, spf)
+			fmt.Fprintf(out, "  DMARC  TXT  _dmarc.%-19s %s\n", name, dmarc)
+			return nil
+		},
+	}
+	add.Flags().StringVar(&tenantSlug, "tenant", "", "tenant slug")
+	add.Flags().StringVar(&name, "name", "", "sending domain (e.g. clientdomain.com)")
+
+	var listTenant string
+	list := &cobra.Command{
+		Use:   "list",
+		Short: "List a tenant's registered domains",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if listTenant == "" {
+				return fmt.Errorf("--tenant is required")
+			}
+			cfg, err := load()
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			pg, err := pgstore.New(ctx, cfg.Postgres)
+			if err != nil {
+				return err
+			}
+			defer pg.Close()
+			tenant, err := pg.GetTenantBySlug(ctx, listTenant)
+			if err != nil {
+				return err
+			}
+			domains, err := pg.ListDomains(ctx, tenant.ID)
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			if len(domains) == 0 {
+				fmt.Fprintln(out, "no domains")
+				return nil
+			}
+			for _, d := range domains {
+				fmt.Fprintf(out, "%s\t%s\n", d.Name, d.Status)
+			}
+			return nil
+		},
+	}
+	list.Flags().StringVar(&listTenant, "tenant", "", "tenant slug")
+
+	c.AddCommand(add, list)
 	return c
 }
 

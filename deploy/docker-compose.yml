@@ -41,6 +41,10 @@ x-app: &app
     context: ..
   image: mxsentinel:local
   profiles: ["app"]
+  # Self-heal transient failures (e.g. a daemon starting before NATS is resolvable on a
+  # `compose restart`, which doesn't honor depends_on ordering). migrate overrides this to
+  # "no" since it's a one-shot job.
+  restart: unless-stopped
   environment: *app-env
   # Let containers reach a host-run service (e.g. Ollama) via host.docker.internal on
   # Linux too (already works on Docker Desktop). Harmless when unused.
@@ -230,6 +234,10 @@ services:
     <<: *app
     profiles: ["relay"]
     command: ["/usr/local/bin/telemetryd", "--follow", "/maillog", "--node-ip", "${RELAY_NODE_IP:-}"]
+    # The host maillog is 0640 root:adm; join the adm group (GID 4 on Debian/Ubuntu) so the
+    # container can read it without making the log world-readable. If `getent group adm`
+    # shows a different GID on your host, change this to match.
+    group_add: ["4"]
     environment:
       <<: *app-env
       MXS_TELEMETRY_HASHKEY: "${MXS_TELEMETRY_HASHKEY:-}"
