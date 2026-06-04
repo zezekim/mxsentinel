@@ -168,7 +168,7 @@ func rowFromEnvelope(ev *contracts.Envelope) (chstore.SMTPEventRow, bool) {
 		TenantID:          ev.TenantID,
 		Source:            ev.Source,
 		EventType:         p.Outcome, // 'received'|'delivered'|'deferred'|'bounced'|'rejected'
-		BounceClass:       p.BounceClass,
+		BounceClass:       enumOrNone(p.BounceClass),
 		MessageID:         p.MessageID,
 		QueueID:           p.QueueID,
 		SessionID:         p.SessionID,
@@ -183,9 +183,9 @@ func rowFromEnvelope(ev *contracts.Envelope) (chstore.SMTPEventRow, bool) {
 		RecipientHash:     p.RecipientHash,
 		Provider:          p.Provider,
 		MXHost:            p.MXHost,
-		SPFResult:         p.SPFResult,
-		DKIMResult:        p.DKIMResult,
-		DMARCResult:       p.DMARCResult,
+		SPFResult:         enumOrNone(p.SPFResult),
+		DKIMResult:        enumOrNone(p.DKIMResult),
+		DMARCResult:       enumOrNone(p.DMARCResult),
 		SMTPCode:          uint16(p.SMTPCode),
 		EnhancedStatus:    p.EnhancedStatus,
 		ResponseText:      p.ResponseText,
@@ -219,4 +219,15 @@ func boolToU8(b bool) uint8 {
 		return 1
 	}
 	return 0
+}
+
+// enumOrNone maps an empty string to "none" for ClickHouse Enum8 columns that default to
+// 'none' (spf/dkim/dmarc results, bounce_class). Maillog-sourced telemetry has no
+// SPF/DKIM/DMARC verdict, so those fields arrive empty — and "" is not a valid enum
+// element, which would otherwise reject the whole insert batch.
+func enumOrNone(s string) string {
+	if s == "" {
+		return "none"
+	}
+	return s
 }
