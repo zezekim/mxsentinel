@@ -1,13 +1,19 @@
-// Command abused is the outbound-abuse guard. It consumes SMTP telemetry from the bus,
-// keeps a rolling per-authenticated-user window of reputation-harming bounces (recipients
-// rejecting mail as spam/blocklisted), and when an account crosses the threshold it
-// disables that SMTP submission user (Dovecot blocks the login on the next auth) and opens
-// an incident. This is the containment layer that complements rspamd's inline filtering:
-// rspamd stops spam it recognizes; abused amputates an account that real receivers are
-// already rejecting, before the shared IP pool's reputation is burned.
+// Command abused is the outbound-abuse guard. It consumes SMTP telemetry from the bus and
+// keeps a rolling per-sending-domain window of reputation-harming bounces (recipients
+// rejecting mail as spam/blocklisted). When a domain crosses the threshold it opens a
+// critical incident so the offending client can be dealt with at the source — before the
+// shared IP pool's reputation is burned. It complements rspamd's inline filtering: rspamd
+// rate-limits and scores on the way out; abused flags a client whose mail real receivers
+// are already rejecting.
 //
-// Detection is event-driven and in-memory (single relay node), so a ClickHouse-less,
-// real-time signal — see docs/deploy-relay.md §9.9.
+// It keys on the SENDING DOMAIN, not the SASL login, on purpose: a shared hosting relay
+// authenticates with one credential for hundreds of client domains, so abuse must be
+// isolated per client. By default abused only alerts (opens an incident) — suspending the
+// shared credential would take down every client. Set -suspend-credential only when each
+// SMTP user maps to a single sender (dedicated-submission deployments).
+//
+// Detection is event-driven and in-memory (single relay node) — a ClickHouse-less,
+// real-time signal. See docs/deploy-relay.md §9.9 / §11.
 package main
 
 import (
@@ -29,16 +35,18 @@ import (
 	"github.com/zezekim/mxsentinel/pkg/contracts"
 )
 
-// Thresholds (flag-tunable). An account trips when, within the rolling window, recipients
-// reject its mail as spam/blocklisted/reputation either in absolute count or as a fraction
-// of its volume. Delivered mail and transient deferrals never count against it, so a
-// legitimate high-volume sender isn't suspended for sending a lot.
+// Thresholds (flag-tunable). A sending domain trips when, within the rolling window,
+// recipients reject its mail as spam/blocklisted/reputation either in absolute count or as
+// a fraction of its volume. Delivered mail and transient deferrals never count, so a
+// legitimate busy domain isn't flagged just for sending a lot.
 var (
-	windowDur  = flag.Duration("window", time.Hour, "rolling window for per-user abuse accounting")
-	minVolume  = flag.Int("min-volume", 50, "minimum messages in the window before the rate trigger applies")
-	abuseRate  = flag.Float64("abuse-rate", 0.30, "fraction of windowed messages bounced as spam/block/reputation that trips suspension")
-	abuseCount = flag.Int("abuse-count", 25, "absolute count of spam/block/reputation bounces that trips suspension regardless of rate")
-	pruneEvery = flag.Duration("prune", 10*time.Minute, "how often to drop idle per-user windows")
+	windowDur   = flag.Duration("window", time.Hour, "rolling window for per-domain abuse accounting")
+	minVolume   = flag.Int("min-volume", 50, "minimum messages in the window before the rate trigger applies")
+	abuseRate   = flag.Float64("abuse-rate", 0.30, "fraction of windowed messages bounced as spam/block/reputation that trips an alert")
+	abuseCount  = flag.Int("abuse-count", 25, "absolute count of spam/block/reputation bounces that trips an alert regardless of rate")
+	cooldownDur = flag.Duration("incident-cooldown", 6*time.Hour, "minimum time between incidents for the same sending domain")
+	pruneEvery  = flag.Duration("prune", 10*time.Minute, "how often to drop idle per-domain windows")
+	suspendCred = flag.Bool("suspend-credential", false, "also disable the SMTP credential the abusive mail authenticated as — ONLY for dedicated per-sender logins; do NOT use with a shared relay credential")
 )
 
 func main() {
@@ -87,7 +95,13 @@ func run() error {
 		return err
 	}
 
-	w := &worker{log: log, pg: pg, users: map[string]*userWindow{}}
+	w := &worker{
+		log: log, pg: pg,
+		suspendCredential: *suspendCred,
+		cooldown:          *cooldownDur,
+		domains:           map[string]*domainWindow{},
+		alerted:           map[string]time.Time{},
+	}
 
 	cc, err := bus.Consume(ctx, events.ConsumeOptions{
 		Stream: "SMTP", Durable: "abused", FilterSubject: "mxs.smtp.>",
@@ -98,7 +112,8 @@ func run() error {
 	defer cc.Stop()
 
 	srv.SetReady(true)
-	log.Info("abused started", "window", windowDur.String(), "abuse_rate", *abuseRate, "abuse_count", *abuseCount, "min_volume", *minVolume)
+	log.Info("abused started", "window", windowDur.String(), "abuse_rate", *abuseRate,
+		"abuse_count", *abuseCount, "min_volume", *minVolume, "suspend_credential", *suspendCred)
 
 	ticker := time.NewTicker(*pruneEvery)
 	defer ticker.Stop()
@@ -118,8 +133,9 @@ type sample struct {
 	abuse bool
 }
 
-type userWindow struct {
+type domainWindow struct {
 	tenant  string
+	user    string // last SASL login seen for this domain (context for the incident)
 	samples []sample
 }
 
@@ -127,39 +143,47 @@ type worker struct {
 	log *slog.Logger
 	pg  *pgstore.Store
 
-	mu    sync.Mutex
-	users map[string]*userWindow
+	suspendCredential bool
+	cooldown          time.Duration
+
+	mu      sync.Mutex
+	domains map[string]*domainWindow
+	alerted map[string]time.Time // sending domain -> last incident time (cooldown)
 }
 
-// onSMTP folds one SMTP event into the sending user's rolling window and trips suspension
-// if the abuse thresholds are crossed.
+// onSMTP folds one SMTP event into its sending domain's rolling window and raises an alert
+// when the abuse thresholds are crossed (deduped per domain by the cooldown).
 func (w *worker) onSMTP(ctx context.Context, ev *contracts.Envelope) error {
 	var p contracts.SMTPPayload
 	if err := ev.DecodePayload(&p); err != nil {
 		return nil // malformed: drop, don't redeliver forever
 	}
-	if p.SASLUsername == "" {
-		return nil // not attributable to an authenticated SMTP account
+	domain := p.FromDomain
+	if domain == "" {
+		return nil // not attributable to a sending domain
 	}
 	abuse := p.Outcome == "bounced" && isReputationBounce(p.BounceClass)
 
 	now := time.Now()
 	w.mu.Lock()
-	uw := w.users[p.SASLUsername]
-	if uw == nil {
-		uw = &userWindow{}
-		w.users[p.SASLUsername] = uw
+	dw := w.domains[domain]
+	if dw == nil {
+		dw = &domainWindow{}
+		w.domains[domain] = dw
 	}
-	uw.tenant = ev.TenantID
+	dw.tenant = ev.TenantID
+	if p.SASLUsername != "" {
+		dw.user = p.SASLUsername
+	}
 	cutoff := now.Add(-*windowDur)
-	kept := uw.samples[:0]
-	for _, s := range uw.samples {
+	kept := dw.samples[:0]
+	for _, s := range dw.samples {
 		if s.t.After(cutoff) {
 			kept = append(kept, s)
 		}
 	}
 	kept = append(kept, sample{t: now, abuse: abuse})
-	uw.samples = kept
+	dw.samples = kept
 	total, abuseN := len(kept), 0
 	for _, s := range kept {
 		if s.abuse {
@@ -167,74 +191,88 @@ func (w *worker) onSMTP(ctx context.Context, ev *contracts.Envelope) error {
 		}
 	}
 	trip := abuseN >= *abuseCount || (total >= *minVolume && float64(abuseN)/float64(total) >= *abuseRate)
+	if trip {
+		if last, seen := w.alerted[domain]; seen && now.Sub(last) < w.cooldown {
+			trip = false // already alerted recently
+		} else {
+			w.alerted[domain] = now
+		}
+	}
+	user, tenant := dw.user, dw.tenant
 	w.mu.Unlock()
 
 	if trip {
-		w.suspend(ctx, ev, p, total, abuseN)
+		w.alert(ctx, ev, domain, user, tenant, total, abuseN)
 	}
 	return nil
 }
 
-// suspend disables the user (idempotently) and opens an incident on the first transition.
-func (w *worker) suspend(ctx context.Context, ev *contracts.Envelope, p contracts.SMTPPayload, total, abuseN int) {
-	tenantID, suspended, err := w.pg.DisableSMTPUserByUsername(ctx, p.SASLUsername)
-	if err != nil {
-		w.log.Error("disable smtp user", "user", p.SASLUsername, "err", err)
-		return
-	}
-	// The account is disabled now (or already was) — drop its window either way.
-	w.mu.Lock()
-	delete(w.users, p.SASLUsername)
-	w.mu.Unlock()
-	if !suspended {
-		return // already disabled: don't reopen an incident
-	}
-
+// alert opens a critical incident for the offending sending domain (and, only when
+// explicitly enabled, disables the credential it came through).
+func (w *worker) alert(ctx context.Context, ev *contracts.Envelope, domain, user, tenant string, total, abuseN int) {
 	rate := 0.0
 	if total > 0 {
 		rate = float64(abuseN) / float64(total)
 	}
-	w.log.Warn("auto-suspended SMTP user (outbound abuse)",
-		"user", p.SASLUsername, "tenant", tenantID, "messages", total, "abuse_bounces", abuseN, "rate", rate)
+	w.log.Warn("outbound abuse detected for sending domain",
+		"domain", domain, "via_user", user, "tenant", tenant, "messages", total, "abuse_bounces", abuseN, "rate", rate)
 
 	detail, _ := json.Marshal(map[string]any{
-		"username":      p.SASLUsername,
-		"window":        windowDur.String(),
-		"messages":      total,
-		"abuse_bounces": abuseN,
-		"abuse_rate":    rate,
-		"reason":        "recipients rejected this account's mail as spam/blocklisted above threshold",
+		"sending_domain": domain,
+		"via_smtp_user":  user,
+		"window":         windowDur.String(),
+		"messages":       total,
+		"abuse_bounces":  abuseN,
+		"abuse_rate":     rate,
+		"reason":         "recipients rejected this sending domain's mail as spam/blocklisted above threshold",
+		"remediation":    "suspend or investigate the sending account at the hosting server",
 	})
 	if _, _, err := w.pg.InsertIncident(ctx, pgstore.IncidentInput{
-		TenantID:      tenantID,
+		TenantID:      tenant,
 		SourceEventID: ev.EventID,
 		Kind:          "other",
 		Severity:      "critical",
-		Domain:        p.FromDomain,
-		Subject:       p.SASLUsername,
-		Title:         "SMTP user auto-suspended (outbound spam/abuse)",
+		Domain:        domain,
+		Subject:       domain,
+		Title:         "Outbound spam/abuse from sending domain " + domain,
 		Detail:        detail,
 	}); err != nil {
-		w.log.Error("open abuse incident", "user", p.SASLUsername, "err", err)
+		w.log.Error("open abuse incident", "domain", domain, "err", err)
+	}
+
+	// Disabling the credential is opt-in: with a shared relay login it would take down
+	// every client, so it's off by default (alert-only).
+	if w.suspendCredential && user != "" {
+		if _, suspended, err := w.pg.DisableSMTPUserByUsername(ctx, user); err != nil {
+			w.log.Error("disable smtp user", "user", user, "err", err)
+		} else if suspended {
+			w.log.Warn("suspended SMTP credential", "user", user, "trigger_domain", domain)
+		}
 	}
 }
 
-// prune drops idle per-user windows so memory tracks only recently-active senders.
+// prune drops idle per-domain windows and stale cooldown entries so memory tracks only
+// recently-active senders.
 func (w *worker) prune(now time.Time) {
 	cutoff := now.Add(-*windowDur)
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	for user, uw := range w.users {
-		kept := uw.samples[:0]
-		for _, s := range uw.samples {
+	for domain, dw := range w.domains {
+		kept := dw.samples[:0]
+		for _, s := range dw.samples {
 			if s.t.After(cutoff) {
 				kept = append(kept, s)
 			}
 		}
 		if len(kept) == 0 {
-			delete(w.users, user)
+			delete(w.domains, domain)
 		} else {
-			uw.samples = kept
+			dw.samples = kept
+		}
+	}
+	for domain, t := range w.alerted {
+		if now.Sub(t) > w.cooldown {
+			delete(w.alerted, domain)
 		}
 	}
 }

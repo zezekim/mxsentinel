@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -506,8 +507,89 @@ func domainCmd(load func() (config.Config, error)) *cobra.Command {
 	}
 	list.Flags().StringVar(&listTenant, "tenant", "", "tenant slug")
 
-	c.AddCommand(add, list)
+	var impTenant, impFile string
+	imp := &cobra.Command{
+		Use:   "import",
+		Short: "Bulk-register sending domains from a list (stdin or --file)",
+		Long: "Reads one domain per line from stdin (or --file). Tolerant of cPanel's\n" +
+			"/etc/trueuserdomains format ('domain: user') and '#' comments — only the\n" +
+			"domain is taken. Idempotent: existing domains are skipped.\n\n" +
+			"  cat /etc/trueuserdomains | mxctl domain import --tenant demo",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if impTenant == "" {
+				return fmt.Errorf("--tenant is required")
+			}
+			var r io.Reader = cmd.InOrStdin()
+			if impFile != "" {
+				f, err := os.Open(impFile)
+				if err != nil {
+					return err
+				}
+				defer f.Close()
+				r = f
+			}
+			cfg, err := load()
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			pg, err := pgstore.New(ctx, cfg.Postgres)
+			if err != nil {
+				return err
+			}
+			defer pg.Close()
+			tenant, err := pg.GetTenantBySlug(ctx, impTenant)
+			if err != nil {
+				return err
+			}
+
+			out := cmd.OutOrStdout()
+			var created, skipped, failed int
+			sc := bufio.NewScanner(r)
+			for sc.Scan() {
+				name := normalizeDomain(sc.Text())
+				if name == "" {
+					continue
+				}
+				ok, err := pg.EnsureDomain(ctx, tenant.ID, name)
+				switch {
+				case err != nil:
+					failed++
+					fmt.Fprintf(cmd.ErrOrStderr(), "  %s: %v\n", name, err)
+				case ok:
+					created++
+				default:
+					skipped++
+				}
+			}
+			if err := sc.Err(); err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "import complete: %d created, %d already present, %d failed (tenant %s)\n",
+				created, skipped, failed, impTenant)
+			return nil
+		},
+	}
+	imp.Flags().StringVar(&impTenant, "tenant", "", "tenant slug")
+	imp.Flags().StringVar(&impFile, "file", "", "read domains from this file instead of stdin")
+
+	c.AddCommand(add, list, imp)
 	return c
+}
+
+// normalizeDomain extracts a bare domain from a line that may be "domain: user", have a
+// leading "*." wildcard, comments, or surrounding whitespace.
+func normalizeDomain(line string) string {
+	line = strings.TrimSpace(line)
+	if line == "" || strings.HasPrefix(line, "#") {
+		return ""
+	}
+	// Take the first whitespace- or colon-delimited field (handles "domain: user").
+	fields := strings.FieldsFunc(line, func(r rune) bool { return r == ' ' || r == '\t' || r == ':' })
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.ToLower(strings.TrimPrefix(fields[0], "*."))
 }
 
 func apikeyCmd(load func() (config.Config, error)) *cobra.Command {

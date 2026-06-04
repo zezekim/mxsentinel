@@ -32,6 +32,7 @@ func main() {
 		nodeIP  = flag.String("node-ip", "", "this relay node's outbound IP (recorded as relay_ip)")
 		spool   = flag.String("spool", "telemetry-spool.ndjson", "path to the disk spool")
 		tenant  = flag.String("tenant", "", "fallback/static tenant id (UUID)")
+		fbSlug  = flag.String("fallback-tenant-slug", "", "attribute mail from unregistered domains to this tenant (by slug) instead of dropping it — for a shared relay")
 		skipDB  = flag.Bool("skip-db", false, "do not connect Postgres; requires -tenant for static resolution")
 		drainEv = flag.Duration("drain-interval", 15*time.Second, "how often to retry the spool")
 	)
@@ -39,7 +40,7 @@ func main() {
 
 	if err := run(runOpts{
 		replay: *replay, follow: *follow, nodeIP: *nodeIP, spool: *spool,
-		tenant: *tenant, skipDB: *skipDB, drainEvery: *drainEv,
+		tenant: *tenant, fallbackSlug: *fbSlug, skipDB: *skipDB, drainEvery: *drainEv,
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, "telemetryd:", err)
 		os.Exit(1)
@@ -47,9 +48,9 @@ func main() {
 }
 
 type runOpts struct {
-	replay, follow, nodeIP, spool, tenant string
-	skipDB                                bool
-	drainEvery                            time.Duration
+	replay, follow, nodeIP, spool, tenant, fallbackSlug string
+	skipDB                                              bool
+	drainEvery                                          time.Duration
 }
 
 func run(o runOpts) error {
@@ -257,7 +258,17 @@ func buildResolver(ctx context.Context, o runOpts, cfg config.Config, log *slog.
 	if err != nil {
 		return nil, err
 	}
-	return &pgResolver{pg: pg, fallback: o.tenant, log: log}, nil
+	fallback := o.tenant
+	if o.fallbackSlug != "" {
+		t, terr := pg.GetTenantBySlug(ctx, o.fallbackSlug)
+		if terr != nil {
+			pg.Close()
+			return nil, fmt.Errorf("resolve fallback tenant slug %q: %w", o.fallbackSlug, terr)
+		}
+		fallback = t.ID
+		log.Info("telemetry fallback tenant set", "slug", o.fallbackSlug, "tenant_id", t.ID)
+	}
+	return &pgResolver{pg: pg, fallback: fallback, log: log}, nil
 }
 
 type staticResolver struct{ id string }
