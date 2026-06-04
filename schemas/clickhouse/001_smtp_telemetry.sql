@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS mxsentinel.smtp_events
     smtp_code           UInt16,                        -- e.g. 250, 421, 550
     enhanced_status     LowCardinality(String),        -- e.g. 5.7.1
     response_text       String,                        -- truncated upstream
+    sasl_username       LowCardinality(String),        -- authenticated submission user (added in migration 00003)
 
     -- Sizes & timing
     size_bytes          UInt32,

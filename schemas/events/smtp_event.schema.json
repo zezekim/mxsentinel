@@ -67,6 +67,7 @@
         "smtp_code":       { "type": "integer", "minimum": 100, "maximum": 599 },
         "enhanced_status": { "type": "string", "pattern": "^[245]\\.[0-9]+\\.[0-9]+$" },
         "response_text":   { "type": "string", "maxLength": 512, "description": "Remote MTA response, truncated." },
+        "sasl_username":   { "type": "string", "description": "Authenticated submission user (SASL login); set for outbound/authenticated mail." },
 
         "size_bytes":          { "type": "integer", "minimum": 0 },
         "queue_time_ms":       { "type": "integer", "minimum": 0 },

@@ -33,7 +33,7 @@ Collect → Normalize → Correlate → Analyze → Explain → Remediate
 | [`schemas/postgres/`](schemas/postgres/) | PostgreSQL DDL — tenants, domains, users, SMTP submission users, DNS snapshots, alert rules, configuration. |
 | [`schemas/clickhouse/`](schemas/clickhouse/) | ClickHouse DDL — SMTP telemetry events and analytics rollups. |
 | [`schemas/events/`](schemas/events/) | JSON Schema contracts for every event family published to the bus. |
-| [`cmd/`](cmd/) | Service entrypoints: `apid` (REST API), `dnsd`, `telemetryd`, `dmarcd`, `correld`, `repd`, `incidentd`, `aid`, and the `mxctl` operator CLI. |
+| [`cmd/`](cmd/) | Service entrypoints: `apid` (REST API), `dnsd`, `telemetryd`, `dmarcd`, `correld`, `repd`, `incidentd`, `aid`, `abused` (outbound-abuse guard), and the `mxctl` operator CLI. |
 | [`internal/`](internal/) | Implementation packages: `api`, `dns`, `telemetry`, `dmarc`, `correlate`, `reputation`, `ai`, `auth`, `config`, `store/*`. |
 | [`web/`](web/) | Next.js dashboard (domains, messages, DMARC, incidents, SMTP users, settings, account). |
 | [`deploy/`](deploy/) | Docker Compose stack, Caddy, the [`install.sh`](deploy/install.sh) installer, and the host [`mxctl`](deploy/mxctl) wrapper. |
@@ -119,7 +119,9 @@ smarthost authenticates with) are created in the dashboard or via `mxctl smtp-us
 authenticated by the relay through Dovecot's Postgres passdb — no flat password files.
 Outbound abuse is filtered on the way out: **rspamd** scores spam and rate-limits each
 authenticated user, and **ClamAV** rejects malware — so one compromised account can't blast
-the shared IP pool onto a blocklist. The DNS resolver, SPF-include endpoint, and DMARC/DKIM
+the shared IP pool onto a blocklist. And `cmd/abused` watches per-user telemetry and
+**auto-suspends** an account whose recipients are rejecting its mail as spam/blocklisted
+(disabling its login + opening an incident). The DNS resolver, SPF-include endpoint, and DMARC/DKIM
 defaults are tenant settings that feed both validation and the generated setup guidance.
 See [`docs/smarthost.md`](docs/smarthost.md) for pointing cPanel/Exim/Postfix/apps at the
 relay, and [`docs/deploy-relay.md`](docs/deploy-relay.md) §9.8 for the spam/malware filters.

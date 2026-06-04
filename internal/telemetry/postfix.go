@@ -33,6 +33,7 @@ var (
 	reResp   = regexp.MustCompile(`status=\w+\s+\((.*)\)\s*$`)
 	reCode   = regexp.MustCompile(`\b([2-5]\d\d)\b`)
 	reHostIP = regexp.MustCompile(`^([^\[]+)\[([^\]]+)\]`)
+	reSASL   = regexp.MustCompile(`\bsasl_username=([^,\s]+)`)
 )
 
 // msgState accumulates the per-message context that arrives across qmgr/cleanup lines
@@ -42,6 +43,7 @@ type msgState struct {
 	fromDomain   string
 	size         int
 	messageID    string
+	saslUsername string // authenticated submission user, from the smtpd client= line
 }
 
 // Parser consumes Postfix maillog lines and emits Events. It is stateful (keyed by queue
@@ -109,6 +111,12 @@ func (p *Parser) Parse(line string) []Event {
 		if m := reMsgID.FindStringSubmatch(kv); m != nil {
 			p.state(qid).messageID = ensureAngle(m[1])
 		}
+	case strings.Contains(kv, "sasl_username="):
+		// Submission smtpd line for an authenticated client; capture who sent it so the
+		// later delivery line can be attributed to the SMTP user (abuse accounting).
+		if m := reSASL.FindStringSubmatch(kv); m != nil {
+			p.state(qid).saslUsername = m[1]
+		}
 	case kv == "removed":
 		delete(p.states, qid)
 	}
@@ -168,6 +176,7 @@ func (p *Parser) emit(qid, kv string, ts time.Time) []Event {
 		SMTPCode:        code,
 		EnhancedStatus:  dsn,
 		ResponseText:    truncate(resp, maxResponseText),
+		SASLUsername:    st.saslUsername,
 		SizeBytes:       st.size,
 	}
 

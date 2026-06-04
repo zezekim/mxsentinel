@@ -91,6 +91,7 @@ type SMTPEventRow struct {
 	SMTPCode       uint16
 	EnhancedStatus string
 	ResponseText   string
+	SASLUsername   string
 
 	SizeBytes         uint32
 	QueueTimeMS       uint32
@@ -109,7 +110,7 @@ const smtpInsertStmt = `INSERT INTO mxsentinel.smtp_events (
 	recipient_domain, recipient_hash, provider, mx_host,
 	spf_result, dkim_result, dmarc_result,
 	tls_used, tls_version, tls_cipher, tls_verified,
-	smtp_code, enhanced_status, response_text,
+	smtp_code, enhanced_status, response_text, sasl_username,
 	size_bytes, queue_time_ms, delivery_latency_ms, attrs
 )`
 
@@ -136,7 +137,7 @@ func (s *Store) InsertSMTPEvents(ctx context.Context, rows []SMTPEventRow) error
 			r.RecipientDomain, r.RecipientHash, r.Provider, r.MXHost,
 			r.SPFResult, r.DKIMResult, r.DMARCResult,
 			r.TLSUsed, r.TLSVersion, r.TLSCipher, r.TLSVerified,
-			r.SMTPCode, r.EnhancedStatus, r.ResponseText,
+			r.SMTPCode, r.EnhancedStatus, r.ResponseText, r.SASLUsername,
 			r.SizeBytes, r.QueueTimeMS, r.DeliveryLatencyMS, attrs,
 		); err != nil {
 			return fmt.Errorf("append row %d: %w", i, err)
