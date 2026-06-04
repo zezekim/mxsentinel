@@ -326,6 +326,38 @@ password_query = SELECT username AS "user", password_hash AS password FROM smtp_
 Alternatively, restrict by trusted IP (`mynetworks`) if your cPanel servers have fixed IPs
 and you do not want to manage SASL passwords at all.
 
+### 4.6 Random outbound IP rotation
+
+To spread sending across all pool IPs (instead of egressing from one), let the installer
+wire it for you — each message picks a random source IP:
+
+```bash
+sudo bash deploy/install.sh --wire-ip-rotation
+# prompts: Sending IPs to rotate across (comma-separated)
+#   203.0.113.11,203.0.113.12,203.0.113.13,…
+```
+
+It defines one `smtp` transport per IP (bound to that source address via `smtp_bind_address`)
+and sets `transport_maps = randmap:{smtp-ip1:, smtp-ip2:, …}` — Postfix's `randmap` returns
+a random entry per lookup, so every message egresses from a random pool IP. It's idempotent
+(re-run to change the set).
+
+**Prerequisite:** every IP must already have **PTR/rDNS** (FCrDNS) — otherwise you trade an
+IP-concentration problem for an authentication failure (Gmail's `5.7.25`). The installer
+does not set rDNS (that's at your VPS provider).
+
+Verify and roll back:
+
+```bash
+# send a few test messages, then confirm the source IP varies:
+grep 'postfix/smtp-ip' /var/log/mail.log | tail
+# undo:
+sudo postconf -X transport_maps && sudo systemctl reload postfix
+```
+
+> Note: per-IP *reputation* is still tracked by `repd` for every pool IP; rotation spreads
+> volume, but warm all IPs (§9.2) before pushing real traffic across them.
+
 ---
 
 ## 5. DKIM with OpenDKIM
@@ -1007,7 +1039,7 @@ Message Explorer (filter by the client's SMTP user).
 
 ## 11. Connecting a whole hosting server (cPanel/WHM, 500+ domains)
 
-When the relay fronts a shared hosting box (e.g. `host1.example.net` with hundreds of
+When the relay fronts a shared hosting box (e.g. `host1.example.com` with hundreds of
 client domains) replacing MailChannels, the hosting server authenticates with **one**
 submission credential and relays *all* its clients' mail through it. You do **not** create
 per-client SMTP users.
@@ -1016,10 +1048,10 @@ per-client SMTP users.
 
 ```bash
 # One credential for the whole server:
-mxctl smtp-user create --tenant <slug> --username host1@sentinel.example.net --password '<pw>'
+mxctl smtp-user create --tenant <slug> --username relay@relay.example.com --password '<pw>'
 ```
 
-In WHM → Exim Configuration Manager, route outbound through `sentinel.example.net:587` with
+In WHM → Exim Configuration Manager, route outbound through `relay.example.com:587` with
 that login (the Exim router/transport/authenticator from §4 / `docs/smarthost.md`, replacing
 the MailChannels config). cPanel keeps DKIM-signing each client domain and the relay passes
 those signatures through untouched (§10), so client mail stays authenticated (`dmarc=pass`

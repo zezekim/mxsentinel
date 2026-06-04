@@ -6,6 +6,7 @@
 #     bash deploy/install.sh --app-only              # skip OS provisioning (Docker etc. already present)
 #     sudo bash deploy/install.sh --wire-relay-sasl  # (re-)wire relay SASL on an existing box, then exit
 #     sudo bash deploy/install.sh --wire-relay-spam  # (re-)install rspamd + ClamAV outbound filtering, then exit
+#     sudo bash deploy/install.sh --wire-ip-rotation # rotate outbound across a list of sending IPs, then exit
 #     bash deploy/install.sh --restart               # restart the running stack, then exit
 #
 # It installs every dependency (Docker, optionally Ollama, optionally Postfix+OpenDKIM),
@@ -21,14 +22,16 @@ set -euo pipefail
 APP_ONLY=0
 WIRE_RELAY_SASL=0
 WIRE_RELAY_SPAM=0
+WIRE_IP_ROTATION=0
 RESTART_ONLY=0
 for arg in "$@"; do
 	case "$arg" in
 		--app-only) APP_ONLY=1 ;;
 		--wire-relay-sasl) WIRE_RELAY_SASL=1 ;;
 		--wire-relay-spam) WIRE_RELAY_SPAM=1 ;;
+		--wire-ip-rotation) WIRE_IP_ROTATION=1 ;;
 		--restart) RESTART_ONLY=1 ;;
-		-h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+		-h|--help) sed -n '2,19p' "$0"; exit 0 ;;
 		*) echo "unknown flag: $arg" >&2; exit 2 ;;
 	esac
 done
@@ -84,10 +87,10 @@ fi
 have openssl || die "openssl not found"
 
 # ---- collect settings ------------------------------------------------------
-# Skipped for the focused maintenance runs (--wire-relay-sasl/--wire-relay-spam/--restart):
-# they don't deploy, so they neither prompt nor write deploy/.env.
+# Skipped for the focused maintenance runs (--wire-relay-*/--restart): they don't deploy,
+# so they neither prompt for settings nor write deploy/.env.
 REUSE_ENV=0
-if [ "$WIRE_RELAY_SASL" -eq 0 ] && [ "$WIRE_RELAY_SPAM" -eq 0 ] && [ "$RESTART_ONLY" -eq 0 ]; then
+if [ "$WIRE_RELAY_SASL" -eq 0 ] && [ "$WIRE_RELAY_SPAM" -eq 0 ] && [ "$WIRE_IP_ROTATION" -eq 0 ] && [ "$RESTART_ONLY" -eq 0 ]; then
 if [ -f "$ENV_FILE" ]; then
 	if yesno "$ENV_FILE exists. Reuse it and just (re)deploy?" y; then
 		REUSE_ENV=1
@@ -433,6 +436,32 @@ EOF
 	info "Per-sending-domain caps default to 300/hour and 3000/day — tune /etc/rspamd/local.d/ratelimit.conf"
 }
 
+provision_ip_rotation() {
+	# $1 = comma-separated sending IPs. Rotate outbound randomly across them: define one
+	# smtp transport per IP (each bound to that source address) and select among them with
+	# Postfix's randmap, which returns a random entry per lookup — so every message egresses
+	# from a random pool IP. Each IP must already have matching PTR/rDNS (FCrDNS) or you'll
+	# trade an IP-concentration problem for an auth problem.
+	local ips="$1" i=0 ip name rand_entries=""
+	IFS=',' read -ra _arr <<< "$ips"
+	for ip in "${_arr[@]}"; do
+		ip="$(printf '%s' "$ip" | tr -d '[:space:]')"
+		[ -z "$ip" ] && continue
+		i=$((i + 1))
+		name="smtp-ip$i"
+		postconf -M "$name/unix=$name unix - - n - - smtp"
+		postconf -P "$name/unix/smtp_bind_address=$ip" "$name/unix/syslog_name=postfix/$name"
+		rand_entries="$rand_entries${rand_entries:+, }$name:"
+	done
+	[ "$i" -ge 1 ] || die "no valid IPs given to --wire-ip-rotation"
+	# randmap picks a random transport per recipient lookup → random source IP per message.
+	postconf -e "transport_maps = randmap:{$rand_entries}"
+	systemctl reload postfix || systemctl restart postfix
+	info "Outbound IP rotation on: $i IP(s), random per message (transport_maps = randmap)."
+	info "Verify: send a few test messages, then 'grep postfix/smtp-ip /var/log/mail.log' — the IP varies."
+	info "Each IP needs PTR/rDNS set (FCrDNS). Rollback: postconf -X transport_maps && systemctl reload postfix"
+}
+
 provision_firewall() {
 	have ufw || return 0
 	bold "Configuring firewall (ufw)…"
@@ -476,6 +505,19 @@ if [ "$WIRE_RELAY_SPAM" -eq 1 ]; then
 	provision_spam
 	bold "Done ✓ — outbound spam/malware filtering wired"
 	info "Test it: GTUBE string (spam) and the EICAR test file (malware) should be rejected — see docs/deploy-relay.md §9.8"
+	exit 0
+fi
+
+# Focused maintenance path: rotate outbound mail randomly across a set of sending IPs, then
+# exit. Idempotent (re-run to change the set). Prompts for the IPs — each must already have
+# PTR/rDNS configured. See docs/deploy-relay.md §4.6.
+if [ "$WIRE_IP_ROTATION" -eq 1 ]; then
+	[ "$(id -u)" -eq 0 ] || die "--wire-ip-rotation needs root — run: sudo bash deploy/install.sh --wire-ip-rotation"
+	have postconf || die "Postfix not found on this host — provision the relay first (full install, without --wire-ip-rotation)"
+	ask ROTATE_IPS "Sending IPs to rotate across (comma-separated; each must have PTR/rDNS set)"
+	[ -n "$ROTATE_IPS" ] || die "no IPs provided"
+	provision_ip_rotation "$ROTATE_IPS"
+	bold "Done ✓ — outbound IP rotation wired"
 	exit 0
 fi
 
