@@ -168,6 +168,9 @@ RELAY_NODE_IP=$RELAY_NODE_IP
 MAIL_DOMAIN=$MAIL_DOMAIN
 MAILLOG_PATH=$MAILLOG_PATH
 MXS_TELEMETRY_HASHKEY=$MXS_TELEMETRY_HASHKEY
+# Attribute relay mail from un-registered sending domains to this tenant (so a shared
+# hosting relay captures all telemetry without registering every client domain).
+MXS_FALLBACK_TENANT_SLUG=$TENANT_SLUG
 MXS_LOGLEVEL=info
 EOF
 	chmod 600 "$ENV_FILE"
@@ -358,23 +361,25 @@ reject = 15;
 add_header = 8;
 greylist = null;
 EOF
-	# Per-authenticated-user send caps — the core "one account can't blast" control. The
-	# "user" selector is only set for authenticated mail, so these buckets apply per SMTP
-	# login and don't touch unauthenticated/local traffic.
+	# Per-SENDING-DOMAIN send caps — the core "one client can't blast" control. Keyed on the
+	# envelope-from domain (not the SASL login) so a shared hosting relay, which authenticates
+	# every client through one credential, still rate-limits each client independently. A
+	# compromised customer is throttled without affecting the others. Tune to your traffic;
+	# if the selector ever fails to evaluate, the limit simply doesn't apply (mail still flows).
 	cat > /etc/rspamd/local.d/ratelimit.conf <<'EOF'
 rates {
-  user_hourly {
-    selector = "user";
+  sender_domain_hourly {
+    selector = "from('smtp').domain";
     bucket = {
-      burst = 200;
-      rate = "200 / 1h";
+      burst = 300;
+      rate = "300 / 1h";
     }
   }
-  user_daily {
-    selector = "user";
+  sender_domain_daily {
+    selector = "from('smtp').domain";
     bucket = {
-      burst = 1000;
-      rate = "1000 / 1d";
+      burst = 3000;
+      rate = "3000 / 1d";
     }
   }
 }
@@ -425,7 +430,7 @@ EOF
 		"anvil_rate_time_unit = 60s"
 	systemctl restart postfix
 	info "Outbound filtering on: rspamd (spam + per-user rate caps) + ClamAV (malware), chained after OpenDKIM"
-	info "Per-user caps default to 200/hour and 1000/day — tune /etc/rspamd/local.d/ratelimit.conf"
+	info "Per-sending-domain caps default to 300/hour and 3000/day — tune /etc/rspamd/local.d/ratelimit.conf"
 }
 
 provision_firewall() {
@@ -606,7 +611,7 @@ if [ "${RELAY:-0}" -eq 1 ] && [ "$APP_ONLY" -eq 0 ] && [ "$REUSE_ENV" -eq 0 ]; t
 	info "Smarthost submission endpoint: $DOMAIN:587 (STARTTLS, AUTH PLAIN/LOGIN)."
 	info "Manage SMTP submission users in the dashboard (SMTP Users) or: mxctl smtp-user create …"
 	info "Smarthost client setup (cPanel/Exim/Postfix/apps): see docs/smarthost.md."
-	info "Outbound spam/malware filtering (rspamd + ClamAV) is on; per-user caps in /etc/rspamd/local.d/ratelimit.conf."
+	info "Outbound spam/malware filtering (rspamd + ClamAV) is on; per-sending-domain caps in /etc/rspamd/local.d/ratelimit.conf."
 	info "Multi-IP sender pools and warmup: see docs/deploy-relay.md."
 fi
 

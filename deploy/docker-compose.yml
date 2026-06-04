@@ -233,7 +233,7 @@ services:
   telemetryd:
     <<: *app
     profiles: ["relay"]
-    command: ["/usr/local/bin/telemetryd", "--follow", "/maillog", "--node-ip", "${RELAY_NODE_IP:-}"]
+    command: ["/usr/local/bin/telemetryd", "--follow", "/maillog", "--node-ip", "${RELAY_NODE_IP:-}", "--fallback-tenant-slug", "${MXS_FALLBACK_TENANT_SLUG:-}"]
     # The host maillog is 0640 root:adm; join the adm group (GID 4 on Debian/Ubuntu) so the
     # container can read it without making the log world-readable. If `getent group adm`
     # shows a different GID on your host, change this to match.
