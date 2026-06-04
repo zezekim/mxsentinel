@@ -20,7 +20,10 @@ type Event struct {
 }
 
 var (
-	reLine   = regexp.MustCompile(`postfix/(\w+)\[\d+\]:\s+(.*)$`)
+	// The process tag is everything between "postfix/" and "[pid]"; it can be multi-segment
+	// for named transports, e.g. "smtp-ip3/smtp" when IP rotation sets syslog_name (so match
+	// any non-space, non-bracket run — not just \w).
+	reLine   = regexp.MustCompile(`postfix/([^\[\s]+)\[\d+\]:\s+(.*)$`)
 	reTS     = regexp.MustCompile(`^(\w{3}\s+\d+\s+\d+:\d+:\d+)`)
 	reQID    = regexp.MustCompile(`^([0-9A-Za-z]{5,}):\s+(.*)$`)
 	reFrom   = regexp.MustCompile(`\bfrom=<([^>]*)>`)
