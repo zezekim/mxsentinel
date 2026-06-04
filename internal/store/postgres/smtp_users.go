@@ -2,7 +2,10 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // SMTPUser is a projection of the smtp_users table. PasswordHash is never read back
@@ -82,6 +85,25 @@ func (s *Store) DeleteSMTPUser(ctx context.Context, tenantID, id string) (bool, 
 		return false, fmt.Errorf("delete smtp user: %w", err)
 	}
 	return tag.RowsAffected() > 0, nil
+}
+
+// DisableSMTPUserByUsername atomically disables an SMTP user iff it is currently enabled,
+// returning the owning tenant id and suspended=true only on that TRUE->FALSE transition.
+// This makes auto-suspension idempotent: a repeat call (or a daemon restart) against an
+// already-disabled user returns suspended=false without re-acting, so we don't reopen
+// incidents. Username is globally unique, so no tenant scoping is needed here.
+func (s *Store) DisableSMTPUserByUsername(ctx context.Context, username string) (tenantID string, suspended bool, err error) {
+	const q = `UPDATE smtp_users SET enabled = FALSE, updated_at = now()
+	           WHERE username = $1 AND enabled = TRUE
+	           RETURNING tenant_id`
+	err = s.Pool.QueryRow(ctx, q, username).Scan(&tenantID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil // no such user, or already disabled
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("disable smtp user by username: %w", err)
+	}
+	return tenantID, true, nil
 }
 
 // DeleteSMTPUserByUsername removes an SMTP user by username (used by the mxctl CLI).

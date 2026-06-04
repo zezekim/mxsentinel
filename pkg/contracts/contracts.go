@@ -124,6 +124,11 @@ type SMTPPayload struct {
 	EnhancedStatus string `json:"enhanced_status,omitempty"`
 	ResponseText   string `json:"response_text,omitempty"`
 
+	// SASLUsername is the authenticated submission user (SASL login) the relay accepted
+	// the message from. Set for outbound/authenticated mail; enables per-account abuse
+	// attribution and auto-suspension (cmd/abused).
+	SASLUsername string `json:"sasl_username,omitempty"`
+
 	SizeBytes         int `json:"size_bytes,omitempty"`
 	QueueTimeMS       int `json:"queue_time_ms,omitempty"`
 	DeliveryLatencyMS int `json:"delivery_latency_ms,omitempty"`
