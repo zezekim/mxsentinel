@@ -15,6 +15,7 @@ export default function MessagesPage() {
   const [sender, setSender] = useState("");
   const [messageId, setMessageId] = useState("");
   const [provider, setProvider] = useState("");
+  const [user, setUser] = useState("");
   const [outcome, setOutcome] = useState("any");
 
   const [messages, setMessages] = useState<Message[]>([]);
@@ -28,10 +29,11 @@ export default function MessagesPage() {
     if (sender) params.set("sender", sender);
     if (messageId) params.set("message_id", messageId);
     if (provider) params.set("provider", provider);
+    if (user) params.set("user", user);
     if (outcome !== "any") params.set("outcome", outcome);
     params.set("limit", "100");
     return params.toString();
-  }, [domain, sender, messageId, provider, outcome]);
+  }, [domain, sender, messageId, provider, user, outcome]);
 
   const fetchMessages = useCallback(() => {
     setLoading(true);
@@ -85,6 +87,12 @@ export default function MessagesPage() {
           value={provider}
           onChange={(e) => setProvider(e.target.value)}
         />
+        <input
+          type="text"
+          placeholder="SMTP user"
+          value={user}
+          onChange={(e) => setUser(e.target.value)}
+        />
         <select value={outcome} onChange={(e) => setOutcome(e.target.value)}>
           {OUTCOMES.map((o) => (
             <option key={o} value={o}>
@@ -116,6 +124,7 @@ export default function MessagesPage() {
                     <th>From Domain</th>
                     <th>Recipient Domain</th>
                     <th>Provider</th>
+                    <th>SMTP User</th>
                     <th>SMTP</th>
                     <th>Message-ID</th>
                     <th>Relay IP</th>
@@ -143,6 +152,7 @@ export default function MessagesPage() {
                       <td>{m.from_domain}</td>
                       <td>{m.recipient_domain}</td>
                       <td>{m.provider}</td>
+                      <td>{m.sasl_username || "—"}</td>
                       <td>{m.smtp_code || "—"}</td>
                       <td>
                         <span

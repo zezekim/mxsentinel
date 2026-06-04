@@ -121,16 +121,18 @@ Re-inspect now; persists a new snapshot if the posture changed. Returns the `hea
 shape plus `"changed": bool`.
 
 ### `GET /v1/messages`
-Message explorer over SMTP telemetry. Query params (all optional except auth):
-`domain`, `sender`, `message_id`, `provider`, `outcome`
-(`received|delivered|deferred|bounced|rejected`), `since`/`until` (RFC 3339), `limit`
-(default 100, max 1000).
+Message explorer over SMTP telemetry (persisted to ClickHouse by `ingestd`). Query params
+(all optional except auth): `domain`, `sender`, `message_id`, `provider`, `outcome`
+(`received|delivered|deferred|bounced|rejected`), `user` (authenticated SMTP submission
+user — for per-account history), `since`/`until` (RFC 3339), `limit` (default 100, max
+1000).
 ```json
 { "messages": [ {
   "event_id": "...", "event_time": "...", "event_type": "smtp.delivered", "outcome": "delivered",
   "message_id": "<...>", "from_domain": "example.com", "recipient_domain": "gmail.com",
   "provider": "google", "relay_ip": "198.51.100.5", "smtp_code": 250,
-  "enhanced_status": "2.0.0", "bounce_class": "none", "response_text": "..." } ],
+  "enhanced_status": "2.0.0", "bounce_class": "none", "response_text": "...",
+  "sasl_username": "mailer@send.example.com" } ],
   "count": 1 }
 ```
 
