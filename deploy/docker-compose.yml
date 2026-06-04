@@ -154,6 +154,16 @@ services:
       migrate: {condition: service_completed_successfully}
       nats: {condition: service_healthy}
 
+  # Consumes smtp.* events from the bus and lands them in ClickHouse (smtp_events),
+  # powering the Message Explorer and per-account history.
+  ingestd:
+    <<: *app
+    command: ["/usr/local/bin/ingestd"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      nats: {condition: service_healthy}
+      clickhouse: {condition: service_healthy}
+
   correld:
     <<: *app
     command: ["/usr/local/bin/correld"]

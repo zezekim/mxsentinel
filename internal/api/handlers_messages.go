@@ -21,6 +21,7 @@ type messageJSON struct {
 	EnhancedStatus  string `json:"enhanced_status"`
 	BounceClass     string `json:"bounce_class"`
 	ResponseText    string `json:"response_text"`
+	SASLUsername    string `json:"sasl_username"`
 }
 
 // handleMessages is the message explorer: filterable, tenant-scoped queries over the
@@ -34,6 +35,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		MessageID: q.Get("message_id"),
 		Provider:  q.Get("provider"),
 		Outcome:   q.Get("outcome"),
+		SASLUser:  q.Get("user"),
 		Limit:     parseIntParam(r, "limit", 100, 1000),
 		Offset:    parseIntParam(r, "offset", 0, 1_000_000),
 	}
@@ -63,6 +65,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			FromDomain: m.FromDomain, RecipientDomain: m.RecipientDomain,
 			Provider: m.Provider, RelayIP: m.RelayIP, SMTPCode: m.SMTPCode,
 			EnhancedStatus: m.EnhancedStatus, BounceClass: m.BounceClass, ResponseText: m.ResponseText,
+			SASLUsername: m.SASLUsername,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{

@@ -15,6 +15,7 @@ type MessageFilter struct {
 	MessageID string
 	Provider  string
 	Outcome   string // one of: received|delivered|deferred|bounced|rejected (matches event_type)
+	SASLUser  string // authenticated submission user (exact)
 	Since     time.Time
 	Until     time.Time
 	Limit     int
@@ -36,6 +37,7 @@ type MessageRow struct {
 	EnhancedStatus  string
 	BounceClass     string
 	ResponseText    string
+	SASLUsername    string
 }
 
 // QueryMessages queries smtp_events with optional filters and returns up to Limit rows.
@@ -49,7 +51,7 @@ func (s *Store) QueryMessages(ctx context.Context, f MessageFilter) ([]MessageRo
 	}
 
 	var sb strings.Builder
-	sb.WriteString(`SELECT toString(event_id), event_time, toString(event_type), message_id, from_domain, recipient_domain, provider, toString(relay_ip), smtp_code, enhanced_status, toString(bounce_class), response_text FROM smtp_events WHERE tenant_id = ?`)
+	sb.WriteString(`SELECT toString(event_id), event_time, toString(event_type), message_id, from_domain, recipient_domain, provider, toString(relay_ip), smtp_code, enhanced_status, toString(bounce_class), response_text, sasl_username FROM smtp_events WHERE tenant_id = ?`)
 
 	args := []any{f.TenantID}
 
@@ -72,6 +74,10 @@ func (s *Store) QueryMessages(ctx context.Context, f MessageFilter) ([]MessageRo
 	if f.Outcome != "" {
 		sb.WriteString(" AND event_type = ?")
 		args = append(args, f.Outcome)
+	}
+	if f.SASLUser != "" {
+		sb.WriteString(" AND sasl_username = ?")
+		args = append(args, f.SASLUser)
 	}
 	if !f.Since.IsZero() {
 		sb.WriteString(" AND event_time >= ?")
@@ -111,6 +117,7 @@ func (s *Store) QueryMessages(ctx context.Context, f MessageFilter) ([]MessageRo
 			&r.EnhancedStatus,
 			&r.BounceClass,
 			&r.ResponseText,
+			&r.SASLUsername,
 		); err != nil {
 			return nil, fmt.Errorf("query messages: %w", err)
 		}
