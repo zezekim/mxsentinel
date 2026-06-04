@@ -6,6 +6,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -214,59 +215,71 @@ func (c *collector) drainOnce(ctx context.Context) {
 // original handle would then silently read nothing. For this to work the log's *directory*
 // must be mounted into the container (not the single file), so reopening the path resolves
 // the new inode (see deploy/docker-compose.yml).
+// followFile tails a maillog with `tail -F` semantics. It reads by explicit byte OFFSET
+// via ReadAt rather than a persistent bufio.Reader: a bufio.Reader wrapping the *os.File
+// can stop yielding data once it has hit EOF (the file's read position no longer advances
+// as new lines are appended), which silently halts live capture. Offset-based reads always
+// pick up appended bytes, and reopening on inode change / truncation handles rotation. For
+// the reopen to see the new inode, the log's *directory* must be mounted into the container
+// (see deploy/docker-compose.yml).
 func (c *collector) followFile(ctx context.Context, path string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
 	defer func() { f.Close() }()
-	if _, err := f.Seek(0, io.SeekEnd); err != nil {
+	offset, err := f.Seek(0, io.SeekEnd) // start at the end; we only want new lines
+	if err != nil {
 		return err
 	}
 	openFI, _ := f.Stat()
-	reader := bufio.NewReader(f)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
-	var partial string
+	buf := make([]byte, 64*1024)
+	var partial []byte
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			for {
-				line, err := reader.ReadString('\n')
-				if err == io.EOF {
-					partial += line // hold incomplete trailing line
-					break
-				}
-				if err != nil {
-					return err
-				}
-				full := partial + line
-				partial = ""
-				for _, ev := range c.parser.Parse(full) {
-					c.handle(ctx, ev)
+		}
+
+		// Rotation/truncation: reopen from the start if the path now points at a different
+		// inode, or the file shrank below our read offset.
+		if st, serr := os.Stat(path); serr == nil {
+			if (openFI != nil && !os.SameFile(openFI, st)) || st.Size() < offset {
+				if nf, oerr := os.Open(path); oerr == nil {
+					f.Close()
+					f = nf
+					openFI, _ = f.Stat()
+					offset = 0
+					partial = partial[:0]
+					c.log.Info("maillog rotated; reopened", "file", path)
 				}
 			}
-			// Rotation/truncation check: if the path now points at a different file, or the
-			// file shrank below our read offset, reopen and read the new file from the start.
-			st, serr := os.Stat(path)
-			if serr != nil {
-				continue // file briefly absent mid-rotation; retry next tick
-			}
-			pos, _ := f.Seek(0, io.SeekCurrent)
-			if (openFI != nil && !os.SameFile(openFI, st)) || st.Size() < pos {
-				nf, oerr := os.Open(path)
-				if oerr != nil {
-					continue
+		}
+
+		// Drain everything appended since the last offset.
+		for {
+			n, rerr := f.ReadAt(buf, offset)
+			if n > 0 {
+				offset += int64(n)
+				partial = append(partial, buf[:n]...)
+				for {
+					i := bytes.IndexByte(partial, '\n')
+					if i < 0 {
+						break
+					}
+					line := string(partial[:i])
+					partial = append(partial[:0], partial[i+1:]...) // keep remainder, compact
+					for _, ev := range c.parser.Parse(line) {
+						c.handle(ctx, ev)
+					}
 				}
-				f.Close()
-				f = nf
-				openFI, _ = f.Stat()
-				reader = bufio.NewReader(f)
-				partial = ""
-				c.log.Info("maillog rotated; reopened", "file", path)
+			}
+			if rerr != nil { // io.EOF (caught up) or transient — retry next tick
+				break
 			}
 		}
 	}
