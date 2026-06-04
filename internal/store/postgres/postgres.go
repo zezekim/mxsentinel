@@ -96,6 +96,18 @@ func (s *Store) CreateDomain(ctx context.Context, tenantID, name string) (string
 	return id, nil
 }
 
+// EnsureDomain registers a sending domain for a tenant if it isn't already, returning
+// created=true only when a new row was inserted. Idempotent — safe for bulk imports.
+func (s *Store) EnsureDomain(ctx context.Context, tenantID, name string) (created bool, err error) {
+	const q = `INSERT INTO domains (tenant_id, name) VALUES ($1, $2)
+	           ON CONFLICT (tenant_id, name) DO NOTHING`
+	tag, err := s.Pool.Exec(ctx, q, tenantID, name)
+	if err != nil {
+		return false, fmt.Errorf("ensure domain %q: %w", name, err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 // ResolveTenantByDomain returns the tenant that owns a sending domain. The bool is false
 // (with nil error) when no such domain is registered.
 func (s *Store) ResolveTenantByDomain(ctx context.Context, name string) (string, bool, error) {

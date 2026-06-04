@@ -1002,3 +1002,64 @@ cPanel — nothing to do on the relay. Recommended client records:
 Verify a client's first send the same way as §8/§9.8: check `dkim=pass header.d=clientdomain.com`
 and `dmarc=pass` in the receiver's `Authentication-Results`, and watch the message in the
 Message Explorer (filter by the client's SMTP user).
+
+---
+
+## 11. Connecting a whole hosting server (cPanel/WHM, 500+ domains)
+
+When the relay fronts a shared hosting box (e.g. `host1.example.net` with hundreds of
+client domains) replacing MailChannels, the hosting server authenticates with **one**
+submission credential and relays *all* its clients' mail through it. You do **not** create
+per-client SMTP users.
+
+### 11.1 Point the hosting server at the relay
+
+```bash
+# One credential for the whole server:
+mxctl smtp-user create --tenant <slug> --username host1@sentinel.example.net --password '<pw>'
+```
+
+In WHM → Exim Configuration Manager, route outbound through `sentinel.example.net:587` with
+that login (the Exim router/transport/authenticator from §4 / `docs/smarthost.md`, replacing
+the MailChannels config). cPanel keeps DKIM-signing each client domain and the relay passes
+those signatures through untouched (§10), so client mail stays authenticated (`dmarc=pass`
+via the client's own aligned DKIM).
+
+### 11.2 Telemetry without registering 500 domains
+
+`telemetryd` attributes each message to a tenant by its From-domain and would otherwise
+**drop** mail from un-registered domains. For a shared relay it's given a **fallback
+tenant** so it attributes everything to the provider's tenant instead:
+
+- The installer sets `MXS_FALLBACK_TENANT_SLUG=<your tenant slug>` in `deploy/.env` on relay
+  installs (telemetryd runs `--fallback-tenant-slug …`). Existing deployments: add that line
+  and redeploy. Now **all** outbound telemetry lands in the Message Explorer — filter by the
+  client's From-domain or SMTP user — with zero per-domain setup.
+
+To also have `dnsd` **monitor** specific client domains' SPF/DKIM/DMARC posture, bulk-import
+them (idempotent) — e.g. straight from cPanel's domain list:
+
+```bash
+cat /etc/trueuserdomains | mxctl domain import --tenant <slug>
+```
+
+### 11.3 Abuse isolation with one shared credential
+
+The danger of a shared login: per-*credential* controls would punish all 500 clients for
+one bad actor. So the relay isolates abuse per **sending domain**:
+
+- **rspamd rate limits are keyed on the envelope-from domain** (not the login), so a
+  single compromised client domain is throttled (default 300/h, 3000/d — tune
+  `/etc/rspamd/local.d/ratelimit.conf`) without affecting the others.
+- **`abused` detects abuse per sending domain** and opens a **critical incident** naming the
+  domain — it does **not** disable the shared credential (that would take down everyone).
+  Remediate at the source: suspend or clean the offending cPanel account on the hosting
+  server. (`-suspend-credential` exists only for dedicated per-sender logins; never enable
+  it with a shared relay credential.)
+
+### 11.4 SPF for client domains (optional but recommended)
+
+cPanel's pass-through DKIM already carries DMARC, so you don't *have* to touch 500 SPF
+records to deliver. To also get `spf=pass`, have each client (or a bulk DNS update, if their
+zones are on your nameservers) swap the old `include:relay.mailchannels.net` for your
+`include:spf.example.net`.
