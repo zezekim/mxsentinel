@@ -116,11 +116,13 @@ defaults, relay host, and the DNS resolver used for validation), and **Account**
 **Outbound relay management.** Beyond observing mail, the optional on-box Postfix relay is
 managed from the same control plane. SMTP submission users (the SASL credentials a
 smarthost authenticates with) are created in the dashboard or via `mxctl smtp-user` and
-authenticated by the relay through Dovecot's Postgres passdb — no flat password files. The
-DNS resolver, SPF-include endpoint, and DMARC/DKIM defaults are tenant settings that feed
-both validation and the generated setup guidance. See
-[`docs/smarthost.md`](docs/smarthost.md) for pointing cPanel/Exim/Postfix/apps at the
-relay.
+authenticated by the relay through Dovecot's Postgres passdb — no flat password files.
+Outbound abuse is filtered on the way out: **rspamd** scores spam and rate-limits each
+authenticated user, and **ClamAV** rejects malware — so one compromised account can't blast
+the shared IP pool onto a blocklist. The DNS resolver, SPF-include endpoint, and DMARC/DKIM
+defaults are tenant settings that feed both validation and the generated setup guidance.
+See [`docs/smarthost.md`](docs/smarthost.md) for pointing cPanel/Exim/Postfix/apps at the
+relay, and [`docs/deploy-relay.md`](docs/deploy-relay.md) §9.8 for the spam/malware filters.
 
 Three signal producers are now implemented:
 
