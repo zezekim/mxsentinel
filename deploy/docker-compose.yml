@@ -161,6 +161,15 @@ services:
       migrate: {condition: service_completed_successfully}
       nats: {condition: service_healthy}
 
+  # Outbound-abuse guard: consumes SMTP telemetry, auto-suspends an SMTP submission user
+  # whose mail recipients are rejecting as spam/blocklisted, and opens an incident.
+  abused:
+    <<: *app
+    command: ["/usr/local/bin/abused"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      nats: {condition: service_healthy}
+
   incidentd:
     <<: *app
     command: ["/usr/local/bin/incidentd"]

@@ -70,6 +70,24 @@ func TestParseDeliveredSequence(t *testing.T) {
 	}
 }
 
+func TestParseCapturesSASLUsername(t *testing.T) {
+	p := newParser()
+	// The submission smtpd line (authenticated client) carries sasl_username; it must be
+	// attributed to the later delivery event via the shared queue id.
+	evs := feed(p,
+		"Jun  3 10:00:00 mail postfix/submission[1200]: 7A1BC2D3: client=cpanel.example.com[203.0.113.9], sasl_method=LOGIN, sasl_username=mailer@send.example.com",
+		"Jun  3 10:00:00 mail postfix/cleanup[1230]: 7A1BC2D3: message-id=<x1@send.example.com>",
+		"Jun  3 10:00:00 mail postfix/qmgr[1234]: 7A1BC2D3: from=<mailer@send.example.com>, size=900, nrcpt=1 (queue active)",
+		"Jun  3 10:00:01 mail postfix/smtp[1240]: 7A1BC2D3: to=<dest@gmail.com>, relay=gmail-smtp-in.l.google.com[142.250.1.2]:25, dsn=2.0.0, status=sent (250 2.0.0 OK)",
+	)
+	if len(evs) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(evs))
+	}
+	if got := evs[0].Payload.SASLUsername; got != "mailer@send.example.com" {
+		t.Errorf("sasl_username = %q, want %q", got, "mailer@send.example.com")
+	}
+}
+
 func TestParseBouncedHard(t *testing.T) {
 	p := newParser()
 	evs := feed(p,

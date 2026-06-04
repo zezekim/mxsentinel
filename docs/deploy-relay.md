@@ -913,3 +913,38 @@ journalctl -u clamav-milter -n 20
 
 A normal (non-spam) test message from the same user should still deliver — confirm you
 haven't set the thresholds so tight that legitimate mail is caught.
+
+### 9.9 Auto-suspending abusive accounts (`abused`)
+
+rspamd stops spam it recognizes on the way out; the **`abused`** daemon catches the
+account that *receivers* are already rejecting — and amputates it before the shared pool's
+reputation is spent. It's the containment layer behind the prevention layer.
+
+How it works: `telemetryd` now stamps every outbound event with the authenticated
+`sasl_username` (parsed from the submission log line). `abused` consumes that SMTP
+telemetry from the bus and keeps a rolling per-user window of **reputation-harming
+bounces** — recipients returning `spam` / `block` / `reputation` rejections. When an
+account crosses the threshold it:
+
+1. disables that SMTP submission user in Postgres — Dovecot blocks its next login
+   instantly (same `enabled` flag the dashboard's **SMTP Users** page shows), and
+2. opens a **critical incident** (visible under Incidents / `GET /v1/incidents`) recording
+   the user, counts, and rate.
+
+Delivered mail and transient deferrals never count against an account, so a legitimate
+high-volume sender isn't suspended for sending a lot — only for receivers rejecting it as
+spam/blocklisted. Suspension is idempotent (a restart won't reopen incidents).
+
+Thresholds are flags on the daemon (defaults shown):
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--window` | `1h` | rolling accounting window |
+| `--abuse-count` | `25` | absolute spam/block bounces that trip suspension |
+| `--abuse-rate` | `0.30` | fraction of windowed mail bounced as spam/block that trips it |
+| `--min-volume` | `50` | minimum messages before the rate trigger applies |
+
+`abused` runs as a container in the `app` profile — no relay-host install needed (it reads
+the bus, not the maillog directly). Re-enable a cleared account from the dashboard (SMTP
+Users → Enable) or `psql`. Tune thresholds by editing the `abused` service command in
+`deploy/docker-compose.yml`, e.g. `["/usr/local/bin/abused","--abuse-count","15"]`.
