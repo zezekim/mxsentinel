@@ -33,7 +33,7 @@ Collect → Normalize → Correlate → Analyze → Explain → Remediate
 | [`schemas/postgres/`](schemas/postgres/) | PostgreSQL DDL — tenants, domains, users, SMTP submission users, DNS snapshots, alert rules, configuration. |
 | [`schemas/clickhouse/`](schemas/clickhouse/) | ClickHouse DDL — SMTP telemetry events and analytics rollups. |
 | [`schemas/events/`](schemas/events/) | JSON Schema contracts for every event family published to the bus. |
-| [`cmd/`](cmd/) | Service entrypoints: `apid` (REST API), `dnsd`, `telemetryd`, `dmarcd`, `correld`, `repd`, `incidentd`, `aid`, `abused` (outbound-abuse guard), and the `mxctl` operator CLI. |
+| [`cmd/`](cmd/) | Service entrypoints: `apid` (REST API), `dnsd`, `telemetryd`, `ingestd` (lands SMTP telemetry in ClickHouse), `dmarcd`, `correld`, `repd`, `incidentd`, `aid`, `abused` (outbound-abuse guard), and the `mxctl` operator CLI. |
 | [`internal/`](internal/) | Implementation packages: `api`, `dns`, `telemetry`, `dmarc`, `correlate`, `reputation`, `ai`, `auth`, `config`, `store/*`. |
 | [`web/`](web/) | Next.js dashboard (domains, messages, DMARC, incidents, SMTP users, settings, account). |
 | [`deploy/`](deploy/) | Docker Compose stack, Caddy, the [`install.sh`](deploy/install.sh) installer, and the host [`mxctl`](deploy/mxctl) wrapper. |
@@ -133,7 +133,9 @@ Three signal producers are now implemented:
   `dns.validation_failed`. Validation logic lives in `internal/dns`.
 - **`cmd/telemetryd`** — parses Postfix maillogs into `smtp.*` events (metadata only —
   recipients hashed, no bodies), publishes them, and spools to disk if the bus is down so
-  mail-flow telemetry is never lost. Parser lives in `internal/telemetry`.
+  mail-flow telemetry is never lost. Parser lives in `internal/telemetry`. **`cmd/ingestd`**
+  consumes those events off the bus and batch-writes them to ClickHouse (`smtp_events`) —
+  the read path behind the Message Explorer and per-account history.
 - **`cmd/dmarcd`** — ingests DMARC aggregate reports (xml/.gz/.zip) from a drop directory:
   archives the raw report to object storage, parses it (`internal/dmarc`), writes a
   pointer row (Postgres) + per-source alignment records (ClickHouse), and quarantines

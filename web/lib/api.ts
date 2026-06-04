@@ -244,6 +244,7 @@ export interface Message {
   enhanced_status: string;
   bounce_class: string;
   response_text: string;
+  sasl_username: string;
 }
 
 export interface MessagesResponse {
