@@ -12,6 +12,7 @@ const links = [
   { href: "/incidents", label: "Incidents" },
   { href: "/smtp-users", label: "SMTP Users" },
   { href: "/settings", label: "Settings" },
+  { href: "/docs", label: "Docs" },
   { href: "/account", label: "Account" },
 ];
 

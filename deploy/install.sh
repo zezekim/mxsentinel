@@ -406,6 +406,8 @@ OnFail Defer
 AddHeader Replace
 LogSyslog true
 EOF
+	# Ensure clamd's runtime dir exists (some setups don't create it until first boot).
+	install -d -o clamav -g clamav /run/clamav 2>/dev/null || mkdir -p /run/clamav
 	# Pull signatures before starting clamd (it won't start with an empty DB). freshclam
 	# can't run while its service holds the lock, so stop it for the one-shot update.
 	systemctl stop clamav-freshclam >/dev/null 2>&1 || true
@@ -413,7 +415,22 @@ EOF
 	freshclam --quiet || warn "freshclam update failed — clamav-daemon will retry on its timer"
 	systemctl enable clamav-freshclam clamav-daemon clamav-milter >/dev/null 2>&1 || true
 	systemctl start clamav-freshclam >/dev/null 2>&1 || true
-	systemctl restart clamav-daemon >/dev/null 2>&1 || warn "clamav-daemon not up yet (signatures still downloading) — it will start automatically"
+	systemctl restart clamav-daemon >/dev/null 2>&1 || true
+	# clamd loads the whole signature DB before it opens its socket (30-60s on first run).
+	# Start clamav-milter only AFTER the socket exists, or Postfix logs "connect to Milter
+	# service inet:localhost:7357: Connection refused" and (with milter_default_action=accept)
+	# silently ships unscanned mail.
+	bold "Waiting for clamd to load signatures and open its socket…"
+	for _ in $(seq 1 60); do
+		{ [ -S /run/clamav/clamd.ctl ] || [ -S /var/run/clamav/clamd.ctl ]; } && break
+		sleep 2
+	done
+	if [ -S /run/clamav/clamd.ctl ] || [ -S /var/run/clamav/clamd.ctl ]; then
+		info "clamd is up"
+	else
+		warn "clamd socket not up yet — it's still loading; clamav-milter will connect once it is."
+		warn "If mail logs show 'Milter ... Connection refused', re-run: sudo bash deploy/install.sh --wire-relay-spam"
+	fi
 	systemctl restart clamav-milter >/dev/null 2>&1 || true
 
 	# --- Postfix: chain the milters (OpenDKIM -> rspamd -> ClamAV) + per-client caps ---
