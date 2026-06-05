@@ -359,6 +359,62 @@ table a:hover {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
+/* ── Docs page ───────────────────────────────────────────────────────────── */
+
+.doc-wrap {
+  max-width: 820px;
+}
+
+.doc-wrap h2 {
+  margin-top: 1.75rem;
+  margin-bottom: 0.5rem;
+  font-size: 1.05rem;
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 0.3rem;
+}
+
+.doc-wrap p {
+  line-height: 1.6;
+  margin-bottom: 0.6rem;
+}
+
+.doc-wrap code {
+  background: #f1f5f9;
+  border-radius: 3px;
+  padding: 0.08em 0.35em;
+  font-size: 0.85em;
+}
+
+.doc-list {
+  margin: 0.4rem 0 0.8rem 1.2rem;
+  line-height: 1.6;
+}
+
+.doc-list li {
+  margin-bottom: 0.4rem;
+}
+
+.doc-code {
+  background: #16213e;
+  color: #e6edf3;
+  border-radius: 6px;
+  padding: 0.9rem 1rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  overflow-x: auto;
+  white-space: pre;
+  margin: 0.5rem 0 1rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.doc-footer {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid #e2e8f0;
+  color: #64748b;
+  font-size: 0.85rem;
+}
+
 /* ── Section intro text ──────────────────────────────────────────────────── */
 
 .section-desc {
