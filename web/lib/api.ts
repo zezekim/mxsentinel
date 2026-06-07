@@ -399,3 +399,29 @@ export function getSettings(): Promise<SettingsResponse> {
 export function updateSettings(settings: MailSettings): Promise<SettingsResponse> {
   return apiPut<SettingsResponse>("/v1/settings", settings);
 }
+
+// ── Top Senders ───────────────────────────────────────────────────────────
+
+export type SenderMetric = "volume" | "spam" | "rejected";
+export type SenderWindow = "1h" | "24h" | "7d" | "30d";
+
+export interface SenderCount {
+  key: string;
+  count: number;
+}
+
+export interface TopSendersResponse {
+  metric: SenderMetric;
+  window: SenderWindow;
+  by_ip: SenderCount[];
+  by_sender: SenderCount[];
+  by_domain: SenderCount[];
+}
+
+export function getTopSenders(
+  metric: SenderMetric,
+  window: SenderWindow,
+): Promise<TopSendersResponse> {
+  const q = new URLSearchParams({ metric, window });
+  return apiGet<TopSendersResponse>(`/v1/analytics/top-senders?${q.toString()}`);
+}
