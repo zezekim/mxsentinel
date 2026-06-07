@@ -92,6 +92,60 @@ func (s *Server) handleRejections(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"reasons": reasons, "groups": items})
 }
 
+var topSenderWindows = map[string]time.Duration{
+	"1h":  time.Hour,
+	"24h": 24 * time.Hour,
+	"7d":  7 * 24 * time.Hour,
+	"30d": 30 * 24 * time.Hour,
+}
+
+var validTopMetrics = map[string]bool{"volume": true, "spam": true, "rejected": true}
+
+// handleTopSenders returns the top senders broken down by IP, SMTP user, and sender domain
+// for a metric (volume|spam|rejected) over a window (1h|24h|7d|30d). Powers the dashboard's
+// Top Senders view.
+func (s *Server) handleTopSenders(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	metric := q.Get("metric")
+	if metric == "" {
+		metric = "volume"
+	}
+	if !validTopMetrics[metric] {
+		writeError(w, http.StatusBadRequest, "bad_request", "metric must be volume, spam, or rejected")
+		return
+	}
+	window := q.Get("window")
+	if window == "" {
+		window = "7d"
+	}
+	dur, ok := topSenderWindows[window]
+	if !ok {
+		writeError(w, http.StatusBadRequest, "bad_request", "window must be 1h, 24h, 7d, or 30d")
+		return
+	}
+	since := time.Now().Add(-dur)
+	limit := parseIntParam(r, "limit", 10, 100)
+	tenant := s.tenant(r)
+
+	out := map[string]any{"metric": metric, "window": window}
+	for _, d := range []struct{ dim, field string }{
+		{"ip", "by_ip"}, {"sender", "by_sender"}, {"domain", "by_domain"},
+	} {
+		rows, err := s.ch.TopSenders(r.Context(), tenant, d.dim, metric, since, limit)
+		if err != nil {
+			s.log.Error("top senders", "dimension", d.dim, "err", err)
+			writeError(w, http.StatusInternalServerError, "internal", "failed to compute top senders")
+			return
+		}
+		items := make([]map[string]any, 0, len(rows))
+		for _, sc := range rows {
+			items = append(items, map[string]any{"key": sc.Key, "count": sc.Count})
+		}
+		out[d.field] = items
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 func parseTimeParam(r *http.Request, name string) time.Time {
 	if v := r.URL.Query().Get(name); v != "" {
 		if t, err := time.Parse(time.RFC3339, v); err == nil {

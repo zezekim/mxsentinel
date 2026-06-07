@@ -899,3 +899,135 @@ table a:hover {
   color: #fff;
   border-color: rgba(255, 255, 255, 0.35);
 }
+
+/* ── Top Senders ─────────────────────────────────────────────────────── */
+.senders-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.senders-tabs,
+.senders-windows {
+  display: inline-flex;
+  gap: 0.25rem;
+  background: #eef0f6;
+  padding: 0.25rem;
+  border-radius: 8px;
+}
+
+.senders-tab,
+.senders-win {
+  border: none;
+  background: transparent;
+  color: #555;
+  font-size: 0.875rem;
+  font-weight: 500;
+  padding: 0.4rem 0.85rem;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.senders-win {
+  padding: 0.4rem 0.7rem;
+  min-width: 2.75rem;
+}
+
+.senders-tab:hover,
+.senders-win:hover {
+  color: #1a1a2e;
+}
+
+.senders-tab.active,
+.senders-win.active {
+  background: #2563eb;
+  color: #fff;
+}
+
+.senders-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+}
+
+@media (max-width: 900px) {
+  .senders-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.senders-col {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 1rem 1.1rem 1.25rem;
+}
+
+.senders-col h2 {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #64748b;
+  margin: 0 0 0.85rem;
+}
+
+.senders-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.senders-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1.5rem 1fr auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.5rem;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.senders-row + .senders-row {
+  border-top: 1px solid #f1f5f9;
+}
+
+.senders-rank {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #94a3b8;
+  z-index: 1;
+}
+
+.senders-key {
+  font-size: 0.85rem;
+  color: #1a1a2e;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  z-index: 1;
+}
+
+.senders-count {
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #2563eb;
+  z-index: 1;
+}
+
+.senders-bar {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  background: #2563eb;
+  opacity: 0.5;
+  border-radius: 2px;
+  pointer-events: none;
+}

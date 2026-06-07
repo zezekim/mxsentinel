@@ -63,6 +63,65 @@ func (s *Store) DeliverabilityByProvider(ctx context.Context, tenantID string, s
 	return results, nil
 }
 
+// SenderCount is one ranked row in a Top Senders breakdown.
+type SenderCount struct {
+	Key   string
+	Count uint64
+}
+
+// topSenderDimensions / topSenderMetrics whitelist the SQL fragments TopSenders may inject,
+// so the dimension/metric strings from the API are never interpolated raw.
+var (
+	topSenderDimensions = map[string]string{
+		"ip":     "toString(relay_ip)", // egress node IP
+		"sender": "sasl_username",      // authenticated SMTP user
+		"domain": "from_domain",        // envelope-sender domain
+	}
+	topSenderMetrics = map[string]string{
+		"volume":   "",
+		"spam":     " AND bounce_class IN ('spam','block','reputation')",
+		"rejected": " AND event_type IN ('bounced','rejected')",
+	}
+)
+
+// TopSenders returns the top values of a dimension (ip|sender|domain) ranked by a metric
+// (volume|spam|rejected) for a tenant since a given time. Powers the dashboard Top Senders
+// view (volume by IP / Sender / Sender Domain).
+func (s *Store) TopSenders(ctx context.Context, tenantID, dimension, metric string, since time.Time, limit int) ([]SenderCount, error) {
+	dimExpr, ok := topSenderDimensions[dimension]
+	if !ok {
+		return nil, fmt.Errorf("invalid dimension %q", dimension)
+	}
+	metricWhere, ok := topSenderMetrics[metric]
+	if !ok {
+		return nil, fmt.Errorf("invalid metric %q", metric)
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 10
+	}
+	// dimExpr/metricWhere come from the whitelists above (not user input); tenant/since/limit
+	// are parameterized.
+	q := fmt.Sprintf(
+		`SELECT %s AS k, count() AS c FROM smtp_events WHERE tenant_id = ? AND event_time >= ?%s AND %s NOT IN ('', '::') GROUP BY k ORDER BY c DESC, k LIMIT ?`,
+		dimExpr, metricWhere, dimExpr,
+	)
+	rows, err := s.conn.Query(ctx, q, tenantID, since, limit)
+	if err != nil {
+		return nil, fmt.Errorf("top senders (%s/%s): %w", dimension, metric, err)
+	}
+	defer rows.Close()
+
+	var out []SenderCount
+	for rows.Next() {
+		var sc SenderCount
+		if err := rows.Scan(&sc.Key, &sc.Count); err != nil {
+			return nil, fmt.Errorf("top senders scan: %w", err)
+		}
+		out = append(out, sc)
+	}
+	return out, rows.Err()
+}
+
 // RejectionGroup holds a group of rejected/bounced events sharing the same
 // (smtp_code, enhanced_status, bounce_class, provider) tuple.
 type RejectionGroup struct {

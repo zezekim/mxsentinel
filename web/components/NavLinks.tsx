@@ -8,6 +8,7 @@ import { me, logout, getToken, type Me } from "@/lib/api";
 const links = [
   { href: "/", label: "Domains" },
   { href: "/messages", label: "Messages" },
+  { href: "/senders", label: "Top Senders" },
   { href: "/dmarc", label: "DMARC" },
   { href: "/incidents", label: "Incidents" },
   { href: "/smtp-users", label: "SMTP Users" },
