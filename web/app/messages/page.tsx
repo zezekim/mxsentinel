@@ -125,13 +125,17 @@ export default function MessagesPage() {
                     <th>Recipient Domain</th>
                     <th>Provider</th>
                     <th>SMTP User</th>
-                    <th>SMTP</th>
+                    <th>Code</th>
+                    <th>Reason</th>
                     <th>Message-ID</th>
                     <th>Relay IP</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {messages.map((m) => (
+                  {messages.map((m) => {
+                    const isFailed = m.outcome === "bounced" || m.outcome === "rejected" || m.outcome === "deferred";
+                    const reason = [m.bounce_class, m.response_text].filter(Boolean).join(" — ");
+                    return (
                     <tr key={m.event_id}>
                       <td style={{ whiteSpace: "nowrap" }}>{fmt(m.event_time)}</td>
                       <td>
@@ -153,7 +157,38 @@ export default function MessagesPage() {
                       <td>{m.recipient_domain}</td>
                       <td>{m.provider}</td>
                       <td>{m.sasl_username || "—"}</td>
-                      <td>{m.smtp_code || "—"}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>
+                        {m.smtp_code || "—"}
+                        {m.enhanced_status && (
+                          <span style={{ color: "#888", fontSize: "0.75rem", marginLeft: "0.3rem" }}>
+                            {m.enhanced_status}
+                          </span>
+                        )}
+                      </td>
+                      <td>
+                        {isFailed && reason ? (
+                          <span
+                            title={reason}
+                            style={{
+                              fontSize: "0.8rem",
+                              maxWidth: "280px",
+                              display: "inline-block",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                              verticalAlign: "middle",
+                              color: m.outcome === "deferred" ? "#b87d00" : "#c0392b",
+                            }}
+                          >
+                            {m.bounce_class && (
+                              <strong style={{ marginRight: "0.3rem" }}>[{m.bounce_class}]</strong>
+                            )}
+                            {m.response_text}
+                          </span>
+                        ) : (
+                          <span style={{ color: "#aaa" }}>—</span>
+                        )}
+                      </td>
                       <td>
                         <span
                           style={{
@@ -172,7 +207,8 @@ export default function MessagesPage() {
                       </td>
                       <td>{m.relay_ip || "—"}</td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
