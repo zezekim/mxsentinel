@@ -370,7 +370,14 @@ EOF
 	# every client through one credential, still rate-limits each client independently. A
 	# compromised customer is throttled without affecting the others. Tune to your traffic;
 	# if the selector ever fails to evaluate, the limit simply doesn't apply (mail still flows).
-	cat > /etc/rspamd/local.d/ratelimit.conf <<'EOF'
+	# Canonical config lives in the repo (deploy/rspamd/ratelimit.conf): per-authenticated-user
+	# buckets AND per-sending-domain buckets, so one runaway client domain is throttled without
+	# taking down the other 499 sharing the credential. Copy it if present; otherwise fall back
+	# to a minimal per-domain inline config so a partial checkout still gets a working limit.
+	if [ -f "$SCRIPT_DIR/rspamd/ratelimit.conf" ]; then
+		install -m 0644 "$SCRIPT_DIR/rspamd/ratelimit.conf" /etc/rspamd/local.d/ratelimit.conf
+	else
+		cat > /etc/rspamd/local.d/ratelimit.conf <<'EOF'
 rates {
   sender_domain_hourly {
     selector = "from('smtp').domain";
@@ -388,6 +395,7 @@ rates {
   }
 }
 EOF
+	fi
 	cat > /etc/rspamd/local.d/options.inc <<'EOF'
 local_addrs = "127.0.0.0/8, ::1";
 EOF
@@ -451,7 +459,7 @@ EOF
 		"anvil_rate_time_unit = 60s"
 	systemctl restart postfix
 	info "Outbound filtering on: rspamd (spam + per-user rate caps) + ClamAV (malware), chained after OpenDKIM"
-	info "Per-sending-domain caps default to 300/hour and 3000/day — tune /etc/rspamd/local.d/ratelimit.conf"
+	info "Outbound rate caps: per-user 200/h·2000/d + per-sending-domain 150/h·1000/d — tune deploy/rspamd/ratelimit.conf"
 }
 
 provision_ip_rotation() {

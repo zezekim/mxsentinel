@@ -425,3 +425,120 @@ export function getTopSenders(
   const q = new URLSearchParams({ metric, window });
   return apiGet<TopSendersResponse>(`/v1/analytics/top-senders?${q.toString()}`);
 }
+
+// --- RBL/DNSBL egress IP health (/v1/rbl/status) ---
+export interface RBLZoneStatus {
+  zone: string;
+  listed: boolean;
+  reason?: string;
+  listed_since?: string | null;
+}
+
+export interface RBLIPStatus {
+  ip: string;
+  healthy: boolean;
+  checked: boolean;
+  listings: RBLZoneStatus[];
+}
+
+export interface RBLSummary {
+  total_ips: number;
+  healthy: number;
+  listed: number;
+}
+
+export interface RBLStatusResponse {
+  checked_at: string | null;
+  summary: RBLSummary;
+  ips: RBLIPStatus[];
+}
+
+export async function getRBLStatus(): Promise<RBLStatusResponse> {
+  return apiGet<RBLStatusResponse>("/v1/rbl/status");
+}
+
+// ─── Send-volume anomalies (Velocity) ──────────────────────────────────────────
+
+export interface VolumeAnomaly {
+  sender_domain: string;
+  observed_hour_count: number;
+  baseline: number;
+  factor: number;
+  detected_at: string;
+}
+
+export interface VolumeMover {
+  sender_domain: string;
+  current: number;
+  baseline: number;
+  ratio: number;
+}
+
+export interface AnomalyRecentResponse {
+  anomalies: VolumeAnomaly[];
+  top_movers: VolumeMover[];
+}
+
+export function getAnomalyRecent(): Promise<AnomalyRecentResponse> {
+  return apiGet<AnomalyRecentResponse>(`/v1/anomaly/recent`);
+}
+
+// --- Reputation (feedback-loop complaints + Gmail Postmaster) ---
+
+export interface ReputationDomain {
+  domain: string;
+  complaints_24h: number;
+  complaints_total: number;
+  postmaster_reputation: string; // "" when no Postmaster data; else HIGH|GOOD|MEDIUM|LOW|BAD
+  spam_rate: number | null;
+  fetched_at: string | null;
+}
+
+export interface ReputationResponse {
+  domains: ReputationDomain[];
+}
+
+export async function getReputation(): Promise<ReputationResponse> {
+  return apiGet<ReputationResponse>("/v1/reputation");
+}
+
+// ─── Auth Security (credential-compromise detection) ────────────────────────
+
+export interface AuthSignal {
+  signal: string;
+  detail: Record<string, unknown>;
+  detected_at: string;
+}
+
+export interface AuthCredential {
+  sasl_username: string;
+  recent_signals: AuthSignal[];
+  locked: boolean;
+  reason?: string;
+  locked_at: string | null;
+}
+
+export interface AuthSecurityResponse {
+  credentials: AuthCredential[];
+}
+
+export interface LockCredentialResponse {
+  sasl_username: string;
+  locked: boolean;
+  reenable_via_smtp_users?: boolean;
+}
+
+export function getAuthSecurity(): Promise<AuthSecurityResponse> {
+  return apiGet<AuthSecurityResponse>("/v1/auth-security");
+}
+
+export function lockCredential(
+  user: string,
+  locked: boolean,
+  reason: string,
+): Promise<LockCredentialResponse> {
+  return apiPost<LockCredentialResponse>(
+    `/v1/auth-security/${encodeURIComponent(user)}/lock`,
+    { locked, reason },
+  );
+}

@@ -33,6 +33,11 @@ x-app-env: &app-env
   # adjust for Linux). aid retries harmlessly until the endpoint is reachable.
   MXS_AI_ENDPOINT: "${MXS_AI_ENDPOINT:-http://host.docker.internal:11434/v1}"
   MXS_AI_MODEL: "${MXS_AI_MODEL:-llama3}"
+  # The relay's outbound IP universe. rbld monitors these against DNSBLs; apid's
+  # GET /v1/rbl/status reads them at request time to know the full egress-IP set.
+  # Comma-separated; falls back to RELAY_NODE_IP (single IP) when unset.
+  RELAY_EGRESS_IPS: "${RELAY_EGRESS_IPS:-}"
+  RELAY_NODE_IP: "${RELAY_NODE_IP:-}"
 
 # Shared definition for every Go service: one image (built from the root Dockerfile),
 # only started under the "app" profile.
@@ -213,6 +218,65 @@ services:
     depends_on:
       migrate: {condition: service_completed_successfully}
       minio: {condition: service_healthy}
+
+  # RBL/DNSBL self-monitor for the relay's own egress IPs. On a ticker (RBL_INTERVAL, default
+  # 15m) it checks every RELAY_EGRESS_IPS entry (falls back to RELAY_NODE_IP) against each
+  # RBL_ZONES zone, upserts ip_blocklist_status, opens a critical incident on a clean->listed
+  # transition, and writes the healthy-IP set to RBL_HEALTHY_IPS_FILE. A HOST-SIDE hook (cron)
+  # reads that file to rebuild the Postfix randmap source and run `postfix reload` — rbld never
+  # reloads host Postfix itself. The file lives under a bind-mounted host dir so the hook can
+  # read it. Spamhaus/etc. may rate-limit cloud resolvers; point the box's resolver at a paid
+  # DQS key for production (see deploy/hooks/rbl-rotation-hook.sh and docs).
+  rbld:
+    <<: *app
+    command: ["/usr/local/bin/rbld"]
+    environment:
+      <<: *app-env
+      RELAY_EGRESS_IPS: "${RELAY_EGRESS_IPS:-}"
+      RELAY_NODE_IP: "${RELAY_NODE_IP:-}"
+      RBL_ZONES: "${RBL_ZONES:-}"
+      RBL_INTERVAL: "${RBL_INTERVAL:-15m}"
+      RBL_LOOKUP_TIMEOUT: "${RBL_LOOKUP_TIMEOUT:-5s}"
+      RBL_HEALTHY_IPS_FILE: "/var/lib/mxsentinel/healthy-ips"
+    volumes:
+      # Host dir holding the healthy-IPs file the host-side rotation hook reads. Writable so
+      # rbld can update it atomically (temp file + rename).
+      - "${RBL_HEALTHY_IPS_DIR:-../rbl-state}:/var/lib/mxsentinel"
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      nats: {condition: service_healthy}
+
+  # Send-volume anomaly detector: consumes SMTP telemetry, keeps a per-(tenant, sender
+  # domain) EWMA hourly baseline, and opens a critical incident when a domain's current-hour
+  # volume spikes well above baseline. Complements rspamd's inline rate caps (host-side).
+  anomalyd:
+    <<: *app
+    command: ["/usr/local/bin/anomalyd"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      nats: {condition: service_healthy}
+
+  # Feedback-loop (ARF) ingestion + Gmail Postmaster reputation. Watches /fbl-drop for ARF
+  # complaint emails (route abuse@ there), records per-domain complaints, and—when
+  # GOOGLE_POSTMASTER_TOKEN is set—pulls domain reputation + spam rate.
+  fbld:
+    <<: *app
+    command: ["/usr/local/bin/fbld", "--dir", "/fbl-drop"]
+    volumes:
+      - ../fbl-drop:/fbl-drop
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      nats: {condition: service_healthy}
+
+  # SASL credential-compromise detection: per-credential behavioral signals (recipient
+  # blasting, bounce spikes, volume) from SMTP telemetry. Auto-lock is opt-in
+  # (AUTHWATCH_AUTOLOCK=true) since the shared relay credential serves every client.
+  authwatchd:
+    <<: *app
+    command: ["/usr/local/bin/authwatchd"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      nats: {condition: service_healthy}
 
   dashboard:
     build:

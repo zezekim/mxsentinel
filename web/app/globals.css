@@ -1031,3 +1031,20 @@ table a:hover {
   border-radius: 2px;
   pointer-events: none;
 }
+
+/* Velocity (send-volume anomalies) page */
+.velocity-intro {
+  color: #555;
+  font-size: 0.875rem;
+  margin-bottom: 1rem;
+  max-width: 60ch;
+}
+
+/* Baseline backdrop bar in the Top Movers list: a muted, slightly taller bar drawn
+   behind the default blue .senders-bar (the current-hour volume) so the gap between
+   current and baseline reads at a glance. */
+.senders-bar.velocity-baseline-bar {
+  height: 5px;
+  background: #94a3b8;
+  opacity: 0.35;
+}
