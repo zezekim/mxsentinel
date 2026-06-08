@@ -1095,3 +1095,79 @@ cPanel's pass-through DKIM already carries DMARC, so you don't *have* to touch 5
 records to deliver. To also get `spf=pass`, have each client (or a bulk DNS update, if their
 zones are on your nameservers) swap the old `include:relay.mailchannels.net` for your
 `include:spf.example.net`.
+
+## 12. Outbound security suite
+
+Four daemons harden the relay against the thing that wrecks a shared pool's reputation: a
+single compromised account blasting spam. They run in the `app` profile (no relay-host
+install except the two host hooks noted below) and surface in the dashboard. Env defaults
+live in `.env.example`.
+
+| Daemon | Page | Job |
+|--------|------|-----|
+| `rbld` | **IP Health** | Watches the relay's own egress IPs against DNSBLs; auto-pulls listed IPs from rotation. |
+| `anomalyd` | **Velocity** | Per-sending-domain send-volume baselines; opens an incident on a spike. |
+| `fbld` | **Reputation** | Ingests ARF feedback-loop complaints + Gmail Postmaster reputation. |
+| `authwatchd` | **Auth Security** | Per-credential behavioral compromise signals; optional auto-lock. |
+
+### 12.1 `rbld` — RBL/DNSBL self-monitoring + auto-pull
+
+`rbld` checks every egress IP (`RELAY_EGRESS_IPS`, comma-separated; falls back to
+`RELAY_NODE_IP`) against each zone in `RBL_ZONES` on a ticker (`RBL_INTERVAL`, default 15m)
+using reversed-octet lookups. On a clean→listed transition it opens a critical incident
+(only for an IP registered to a tenant via `mxctl relay-node add` — `incidents.tenant_id`
+is `NOT NULL`) and surfaces the state at `GET /v1/rbl/status` and the **IP Health** page.
+
+**Auto-pull is a two-part loop.** `rbld` (in its container) writes the set of *healthy* IPs
+to `RBL_HEALTHY_IPS_FILE` on a bind-mounted host dir (`RBL_HEALTHY_IPS_DIR`, default
+`deploy/rbl-state/`). It **cannot reload host Postfix**, so a host-side hook closes the loop:
+
+```bash
+# Install the hook on the relay host and run it every few minutes (root):
+sudo crontab -e
+# */5 * * * * /opt/mxsentinel/deploy/hooks/rbl-rotation-hook.sh >> /var/log/mxs-rbl-hook.log 2>&1
+```
+
+`deploy/hooks/rbl-rotation-hook.sh` rebuilds the Postfix `randmap` over only the healthy IPs
+(same `smtp-ipN` scheme as `--wire-ip-rotation`, so the `postfix/smtp-ipN` log tags telemetry
+keys on are unchanged) and reloads Postfix — but **fails open**: an empty healthy set leaves
+rotation untouched, so a total-listing scare never halts all outbound mail.
+
+Caveats: IPv4-only; free DNSBL queries from cloud resolvers get throttled (use a paid DQS
+key for production); lookup errors are treated as *indeterminate* (never written clean or
+listed). `rbld` overlaps the existing `repd` blacklist check but adds the persistent state,
+UI, and auto-pull — they're complementary.
+
+### 12.2 `anomalyd` — send-volume anomaly detection
+
+Consumes the same telemetry as `abused`, keyed by **sending domain** (not the shared SASL
+login). It keeps an EWMA hourly baseline per domain in Postgres and trips when a completed
+hour exceeds `max(baseline × ANOMALY_FACTOR, ANOMALY_MIN_ABS)` once the domain has
+`ANOMALY_MIN_SAMPLES` hours of history — so expect ~6 silent hours per new domain while it
+learns. A trip opens a critical incident (deduped one-per-domain-per-hour) and shows on the
+**Velocity** page. This is the *relative* signal; rspamd's `ratelimit.conf` is the *absolute*
+inline brake (§9.4 / below).
+
+The richer rate-limit config now ships in `deploy/rspamd/ratelimit.conf` (per-authenticated-
+user **and** per-sending-domain buckets) and is installed by `provision_spam` /
+`--wire-relay-spam`. Edit that file and `systemctl reload rspamd` to tune.
+
+### 12.3 `fbld` — feedback loops + Postmaster reputation
+
+`fbld` watches `/fbl-drop` (bind-mounted `../fbl-drop`) for ARF complaint emails (RFC 5965).
+Route your `abuse@` mailbox — the address you enroll with each provider's feedback loop
+(Google, Microsoft SNDS/JMRP, Yahoo CFL) — into that directory. Complaints are recorded per
+sending domain; when a domain crosses `FBL_COMPLAINT_THRESHOLD` in 24h an incident opens.
+Set `GOOGLE_POSTMASTER_TOKEN` (operator-supplied bearer token, refreshed periodically) to
+also pull Gmail Postmaster reputation + spam rate. Everything is on the **Reputation** page.
+Nothing appears until the provider enrollment + `abuse@` plumbing exists.
+
+### 12.4 `authwatchd` — credential-compromise detection
+
+Per-credential behavioral signals (recipient-domain blasting, bounce-rate spike, volume
+spike) from telemetry, on the **Auth Security** page. **Auto-lock is opt-in**
+(`AUTHWATCH_AUTOLOCK=true`) and should stay **off on a shared relay** — one credential serves
+every client, so locking it blocks everyone (same caveat as `abused --suspend-credential`).
+These signals — and the not-yet-implemented source-IP geo/ASN tell — are most useful in a
+**dedicated-submission** deployment (one credential per end-user). Unlock a credential from
+the dashboard's **SMTP Users → Enable**.
