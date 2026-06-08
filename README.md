@@ -33,9 +33,9 @@ Collect → Normalize → Correlate → Analyze → Explain → Remediate
 | [`schemas/postgres/`](schemas/postgres/) | PostgreSQL DDL — tenants, domains, users, SMTP submission users, DNS snapshots, alert rules, configuration. |
 | [`schemas/clickhouse/`](schemas/clickhouse/) | ClickHouse DDL — SMTP telemetry events and analytics rollups. |
 | [`schemas/events/`](schemas/events/) | JSON Schema contracts for every event family published to the bus. |
-| [`cmd/`](cmd/) | Service entrypoints: `apid` (REST API), `dnsd`, `telemetryd`, `ingestd` (lands SMTP telemetry in ClickHouse), `dmarcd`, `correld`, `repd`, `incidentd`, `aid`, `abused` (outbound-abuse guard), and the `mxctl` operator CLI. |
-| [`internal/`](internal/) | Implementation packages: `api`, `dns`, `telemetry`, `dmarc`, `correlate`, `reputation`, `ai`, `auth`, `config`, `store/*`. |
-| [`web/`](web/) | Next.js dashboard (domains, messages, DMARC, incidents, SMTP users, settings, account). |
+| [`cmd/`](cmd/) | Service entrypoints: `apid` (REST API), `dnsd`, `telemetryd`, `ingestd` (lands SMTP telemetry in ClickHouse), `dmarcd`, `correld`, `repd`, `incidentd`, `aid`, `abused` (outbound-abuse guard), `rbld` (DNSBL self-monitor + auto-pull), `anomalyd` (send-volume anomalies), `fbld` (feedback-loop + Postmaster reputation), `authwatchd` (SASL compromise detection), and the `mxctl` operator CLI. |
+| [`internal/`](internal/) | Implementation packages: `api`, `dns`, `telemetry`, `dmarc`, `correlate`, `reputation`, `ratelimit`, `rbl`, `anomaly`, `fbl`, `authwatch`, `ai`, `auth`, `config`, `store/*`. |
+| [`web/`](web/) | Next.js dashboard (domains, messages, top senders, IP health, velocity, reputation, auth security, DMARC, incidents, SMTP users, settings, docs, account). |
 | [`deploy/`](deploy/) | Docker Compose stack, Caddy, the [`install.sh`](deploy/install.sh) installer, and the host [`mxctl`](deploy/mxctl) wrapper. |
 | [`docs/api-v1.md`](docs/api-v1.md) | REST API reference (auth, scopes, every `/v1` endpoint). |
 | [`docs/deploy-vps.md`](docs/deploy-vps.md) · [`docs/deploy-relay.md`](docs/deploy-relay.md) · [`docs/smarthost.md`](docs/smarthost.md) | VPS runbook, Postfix relay setup, and smarthost client configuration. |
@@ -105,26 +105,48 @@ event. The prompt-building and response-parsing logic lives in `internal/ai`; th
 endpoint/model are configured via `MXS_AI_*`.
 
 The REST API (`cmd/apid`, see [`docs/api-v1.md`](docs/api-v1.md)) makes the collected
-data queryable: domain health, DNS drift timeline, a message explorer over ClickHouse,
-and DMARC reports with alignment — all tenant-scoped via Bearer tokens. The **Next.js
-dashboard** in [`web/`](web/) renders those screens, plus **SMTP Users** (manage the
-relay's submission credentials), **Settings** (SPF include endpoint, DKIM selector, DMARC
-defaults, relay host, and the DNS resolver used for validation), and **Account**
-(self-service password change). Point it at the API with `NEXT_PUBLIC_API_TOKEN` (from
-`make apikey`), or just log in.
+data queryable: domain health, DNS drift timeline, a message explorer over ClickHouse, a
+ranked **Top Senders** view (volume / detected spam / rejections, broken down by IP,
+sender, and sending domain), and DMARC reports with alignment — all tenant-scoped via
+Bearer tokens. The **Next.js dashboard** in [`web/`](web/) renders those screens, plus the
+outbound-security pages (below), **SMTP Users** (manage the relay's submission
+credentials), **Settings** (SPF include endpoint, DKIM selector, DMARC defaults, relay
+host, and the DNS resolver used for validation), an in-app **Docs** runbook, and
+**Account** (self-service password change). Point it at the API with
+`NEXT_PUBLIC_API_TOKEN` (from `make apikey`), or just log in.
 
 **Outbound relay management.** Beyond observing mail, the optional on-box Postfix relay is
 managed from the same control plane. SMTP submission users (the SASL credentials a
 smarthost authenticates with) are created in the dashboard or via `mxctl smtp-user` and
 authenticated by the relay through Dovecot's Postgres passdb — no flat password files.
-Outbound abuse is filtered on the way out: **rspamd** scores spam and rate-limits each
-authenticated user, and **ClamAV** rejects malware — so one compromised account can't blast
-the shared IP pool onto a blocklist. And `cmd/abused` watches per-user telemetry and
-**auto-suspends** an account whose recipients are rejecting its mail as spam/blocklisted
-(disabling its login + opening an incident). The DNS resolver, SPF-include endpoint, and DMARC/DKIM
-defaults are tenant settings that feed both validation and the generated setup guidance.
-See [`docs/smarthost.md`](docs/smarthost.md) for pointing cPanel/Exim/Postfix/apps at the
-relay, and [`docs/deploy-relay.md`](docs/deploy-relay.md) §9.8 for the spam/malware filters.
+Outbound abuse is filtered on the way out: **rspamd** scores spam and rate-limits both each
+authenticated user and each sending domain, and **ClamAV** rejects malware — so one
+compromised account can't blast the shared IP pool onto a blocklist. And `cmd/abused`
+watches per-user telemetry and **auto-suspends** an account whose recipients are rejecting
+its mail as spam/blocklisted (disabling its login + opening an incident). The DNS resolver,
+SPF-include endpoint, and DMARC/DKIM defaults are tenant settings that feed both validation
+and the generated setup guidance. See [`docs/smarthost.md`](docs/smarthost.md) for pointing
+cPanel/Exim/Postfix/apps at the relay, and [`docs/deploy-relay.md`](docs/deploy-relay.md)
+§9.8 for the spam/malware filters.
+
+**Outbound security suite.** Four daemons defend the shared IP pool against its worst
+case — one compromised account spamming everyone onto a blocklist — and each has a
+dashboard page plus a `/v1` endpoint:
+
+- **`cmd/rbld`** (IP Health) monitors the relay's *own* egress IPs against DNSBLs; on a
+  listing it opens an incident and writes a healthy-IP set that a host hook uses to
+  **auto-pull** the bad IP from the Postfix rotation — failing open, so a total-listing
+  scare never halts all mail.
+- **`cmd/anomalyd`** (Velocity) learns each sending domain's hourly volume baseline and
+  opens an incident on a spike — the *relative* signal complementing rspamd's *absolute*
+  rate caps.
+- **`cmd/fbld`** (Reputation) ingests ARF feedback-loop complaints from an `abuse@` drop
+  directory and pulls Gmail Postmaster reputation + spam rate.
+- **`cmd/authwatchd`** (Auth Security) flags per-credential compromise behavior
+  (recipient-blasting, bounce/volume spikes), with opt-in auto-lock.
+
+See [`docs/deploy-relay.md`](docs/deploy-relay.md) §12 for the full runbook (env vars, the
+RBL rotation hook, and the shared-relay caveats).
 
 Three signal producers are now implemented:
 
