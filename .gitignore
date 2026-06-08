@@ -1,5 +1,6 @@
 # Local Claude Code settings (machine-specific)
 .claude/settings.local.json
+CLAUDE.md
 
 # Go build output
 /bin/
