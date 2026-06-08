@@ -98,6 +98,31 @@ List the tenant's domains with health derived from the latest DNS snapshot.
 } ] }
 ```
 
+### `POST /v1/domains` (write)
+Register a domain for DNS monitoring. `name` must be a valid domain name. Returns **409** if the domain already exists for this tenant.
+```json
+// request
+{ "name": "example.com" }
+// response 201
+{ "domain": { "id": "uuid", "name": "example.com", "status": "pending_verification",
+              "categories": { "spf": "unknown", ... }, "overall": "unknown", "finding_count": 0 } }
+```
+
+### `PATCH /v1/domains/{id}` (write)
+Update a domain's monitoring status. Valid values for `status`: `monitored`, `paused`. Returns **404** if not found.
+```json
+// request
+{ "status": "paused" }
+// response
+{ "ok": true }
+```
+
+### `DELETE /v1/domains/{id}` (admin)
+Remove a domain and all its DNS snapshots, findings, and related data (CASCADE). Returns **404** if not found.
+```json
+{ "deleted": true }
+```
+
 ### `GET /v1/domains/{id}/health`
 Full health for one domain.
 ```json
@@ -213,6 +238,60 @@ Replaces the tenant's mail settings (same shape) → `{ "settings": { … } }`.
 Stored under the `mail` key of the tenant's `settings` JSONB. These drive the recommended
 DNS records, the smarthost connection instructions (see [smarthost.md](smarthost.md)), and
 which DNS server `dnsd` + on-demand rechecks use to validate SPF/DKIM/DMARC.
+
+### `GET /v1/analytics/top-senders?metric=volume&window=24h`
+Ranked senders by the given metric (`volume`, `spam`, `rejected`) over a time window (`1h`, `24h`, `7d`, `30d`). Results are broken down by relay IP, envelope sender, and sending domain.
+```json
+{ "metric": "volume", "window": "24h",
+  "by_ip":     [ { "key": "198.51.100.5", "count": 4200 } ],
+  "by_sender": [ { "key": "mailer@send.example.com", "count": 3100 } ],
+  "by_domain": [ { "key": "example.com", "count": 4200 } ] }
+```
+
+### `GET /v1/rbl/status`
+Current DNSBL listing status for all relay egress IPs monitored by `rbld`. Includes a summary and per-IP breakdown.
+```json
+{ "checked_at": "2026-06-09T10:00:00Z",
+  "summary": { "total_ips": 3, "healthy": 2, "listed": 1 },
+  "ips": [ { "ip": "198.51.100.5", "healthy": false, "checked": true,
+              "listings": [ { "zone": "zen.spamhaus.org", "listed": true,
+                               "reason": "...", "listed_since": "..." } ] } ] }
+```
+
+### `GET /v1/anomaly/recent`
+Recent send-volume anomalies detected by `anomalyd` (domains whose hourly count spiked beyond their learned baseline). Also returns the top current movers (highest ratio vs baseline).
+```json
+{ "anomalies": [ { "sender_domain": "example.com", "observed_hour_count": 5000,
+                   "baseline": 500, "factor": 10.0, "detected_at": "..." } ],
+  "top_movers": [ { "sender_domain": "example.com", "current": 5000, "baseline": 500, "ratio": 10.0 } ] }
+```
+
+### `GET /v1/reputation`
+Feedback-loop complaint counts and Gmail Postmaster reputation for all monitored sending domains (populated by `fbld`).
+```json
+{ "domains": [ { "domain": "example.com", "complaints_24h": 3, "complaints_total": 47,
+                  "postmaster_reputation": "HIGH", "spam_rate": 0.0003,
+                  "fetched_at": "2026-06-09T09:00:00Z" } ] }
+```
+
+### `GET /v1/auth-security`
+Credential compromise signals detected by `authwatchd` — per SMTP submission user, with recent signal details and lock status.
+```json
+{ "credentials": [ { "sasl_username": "mailer@send.example.com",
+                      "recent_signals": [ { "signal": "recipient_blast",
+                                            "detail": { "recipient_count": 1200 },
+                                            "detected_at": "..." } ],
+                      "locked": false, "locked_at": null } ] }
+```
+
+### `POST /v1/auth-security/{user}/lock` (admin)
+Lock or unlock an SMTP submission credential flagged by `authwatchd`. `locked=true` disables the SASL login; `locked=false` re-enables it (equivalent to re-enabling via `/v1/smtp-users`).
+```json
+// request
+{ "locked": true, "reason": "recipient blast detected" }
+// response
+{ "sasl_username": "mailer@send.example.com", "locked": true }
+```
 
 ## Notes
 - Routing uses the Go 1.22 stdlib `net/http` mux (`GET /v1/domains/{id}/health`,

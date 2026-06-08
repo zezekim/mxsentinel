@@ -192,6 +192,25 @@ export interface DomainsResponse {
   domains: DomainSummary[];
 }
 
+export interface CreateDomainResponse {
+  domain: DomainSummary;
+}
+
+export function createDomain(name: string): Promise<CreateDomainResponse> {
+  return apiPost<CreateDomainResponse>("/v1/domains", { name });
+}
+
+export function deleteDomain(id: string): Promise<{ deleted: boolean }> {
+  return apiDelete<{ deleted: boolean }>(`/v1/domains/${id}`);
+}
+
+export function updateDomain(
+  id: string,
+  status: "monitored" | "paused",
+): Promise<{ ok: boolean }> {
+  return apiPatch<{ ok: boolean }>(`/v1/domains/${id}`, { status });
+}
+
 export interface Snapshot {
   id: string;
   captured_at: string;

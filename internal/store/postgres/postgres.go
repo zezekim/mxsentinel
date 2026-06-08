@@ -96,6 +96,29 @@ func (s *Store) CreateDomain(ctx context.Context, tenantID, name string) (string
 	return id, nil
 }
 
+// DeleteDomain removes a domain (and all its snapshots/findings via CASCADE) for the given
+// tenant. Returns found=false (nil error) when no matching row exists.
+func (s *Store) DeleteDomain(ctx context.Context, tenantID, domainID string) (bool, error) {
+	const q = `DELETE FROM domains WHERE id = $1 AND tenant_id = $2`
+	tag, err := s.Pool.Exec(ctx, q, domainID, tenantID)
+	if err != nil {
+		return false, fmt.Errorf("delete domain: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// UpdateDomainStatus sets the status of a tenant-owned domain. Valid values are the
+// domain_status enum members: monitored, paused, pending_verification, error.
+// Returns found=false (nil error) when no matching row exists.
+func (s *Store) UpdateDomainStatus(ctx context.Context, tenantID, domainID, status string) (bool, error) {
+	const q = `UPDATE domains SET status = $3::domain_status WHERE id = $1 AND tenant_id = $2`
+	tag, err := s.Pool.Exec(ctx, q, domainID, tenantID, status)
+	if err != nil {
+		return false, fmt.Errorf("update domain status: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 // EnsureDomain registers a sending domain for a tenant if it isn't already, returning
 // created=true only when a new row was inserted. Idempotent — safe for bulk imports.
 func (s *Store) EnsureDomain(ctx context.Context, tenantID, name string) (created bool, err error) {

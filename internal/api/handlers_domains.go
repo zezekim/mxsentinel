@@ -3,13 +3,17 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	dnsx "github.com/zezekim/mxsentinel/internal/dns"
 	pgstore "github.com/zezekim/mxsentinel/internal/store/postgres"
 	"github.com/zezekim/mxsentinel/pkg/contracts"
 )
+
+var domainNameRE = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)+$`)
 
 // ---- response shapes -------------------------------------------------------
 
@@ -65,6 +69,91 @@ type recheckResponse struct {
 }
 
 // ---- handlers --------------------------------------------------------------
+
+type createDomainRequest struct {
+	Name string `json:"name"`
+}
+
+// handleCreateDomain registers a new domain for monitoring under the caller's tenant.
+func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
+	var req createDomainRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+		return
+	}
+	req.Name = strings.ToLower(strings.TrimSpace(req.Name))
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "bad_request", "name is required")
+		return
+	}
+	if !domainNameRE.MatchString(req.Name) {
+		writeError(w, http.StatusBadRequest, "bad_request", "name must be a valid domain name")
+		return
+	}
+
+	tenant := s.tenant(r)
+	id, err := s.pg.CreateDomain(r.Context(), tenant, req.Name)
+	if err != nil {
+		s.log.Error("create domain", "err", err)
+		writeError(w, http.StatusConflict, "conflict", "could not create domain (it may already exist)")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"domain": domainListItem{
+			ID:           id,
+			Name:         req.Name,
+			Status:       "pending_verification",
+			Categories:   categoryStatuses{SPF: "unknown", DKIM: "unknown", DMARC: "unknown", MX: "unknown"},
+			Overall:      "unknown",
+			FindingCount: 0,
+		},
+	})
+}
+
+// handleDeleteDomain removes a domain and all its data for the caller's tenant.
+func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
+	tenant := s.tenant(r)
+	found, err := s.pg.DeleteDomain(r.Context(), tenant, r.PathValue("id"))
+	if err != nil {
+		s.log.Error("delete domain", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "failed to delete domain")
+		return
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "not_found", "domain not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
+}
+
+type updateDomainRequest struct {
+	Status string `json:"status"`
+}
+
+// handleUpdateDomain updates a domain's monitoring status (monitored or paused).
+func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
+	var req updateDomainRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+		return
+	}
+	if req.Status != "monitored" && req.Status != "paused" {
+		writeError(w, http.StatusBadRequest, "bad_request", `status must be "monitored" or "paused"`)
+		return
+	}
+	tenant := s.tenant(r)
+	found, err := s.pg.UpdateDomainStatus(r.Context(), tenant, r.PathValue("id"), req.Status)
+	if err != nil {
+		s.log.Error("update domain status", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "failed to update domain")
+		return
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "not_found", "domain not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
 
 func (s *Server) handleListDomains(w http.ResponseWriter, r *http.Request) {
 	tenant := s.tenant(r)

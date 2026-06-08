@@ -3,9 +3,12 @@
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import {
   apiGet,
   apiPost,
+  deleteDomain,
+  updateDomain,
   type DomainHealthResponse,
   type RecheckResponse,
   type SnapshotsResponse,
@@ -28,6 +31,7 @@ function shortHash(h: string): string {
 
 export default function DomainDetailPage() {
   const params = useParams();
+  const router = useRouter();
   const id = params?.id as string;
 
   const [health, setHealth] = useState<DomainHealthResponse | null>(null);
@@ -36,6 +40,8 @@ export default function DomainDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [rechecking, setRechecking] = useState(false);
   const [recheckMsg, setRecheckMsg] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [toggling, setToggling] = useState(false);
 
   const loadHealth = useCallback(() => {
     return apiGet<DomainHealthResponse>(`/v1/domains/${id}/health`);
@@ -71,6 +77,27 @@ export default function DomainDetailPage() {
       .finally(() => setRechecking(false));
   }
 
+  function handleDelete() {
+    if (!confirm(`Delete domain "${health?.domain.name}"? This removes all snapshots and findings.`)) return;
+    setDeleting(true);
+    deleteDomain(id)
+      .then(() => router.push("/"))
+      .catch((e: unknown) => {
+        setRecheckMsg(`Delete failed: ${e instanceof Error ? e.message : String(e)}`);
+        setDeleting(false);
+      });
+  }
+
+  function handleToggleMonitoring() {
+    const current = health?.domain.status ?? "monitored";
+    const next = current === "paused" ? "monitored" : "paused";
+    setToggling(true);
+    updateDomain(id, next)
+      .then(() => loadHealth().then(setHealth))
+      .catch((e: unknown) => setRecheckMsg(`Error: ${e instanceof Error ? e.message : String(e)}`))
+      .finally(() => setToggling(false));
+  }
+
   return (
     <>
       <Link href="/" className="back-link">
@@ -83,12 +110,31 @@ export default function DomainDetailPage() {
           <div className="detail-header">
             <h1>{health.domain.name}</h1>
             <Badge kind="status" value={health.overall as OverallStatus} />
+            {health.domain.status === "paused" && (
+              <span style={{ fontSize: "0.75rem", color: "#888", fontStyle: "italic" }}>monitoring paused</span>
+            )}
             <button
               className="btn btn-primary"
               onClick={handleRecheck}
               disabled={rechecking}
             >
               {rechecking ? "Checking…" : "Recheck now"}
+            </button>
+            <button
+              className="btn"
+              onClick={handleToggleMonitoring}
+              disabled={toggling}
+              style={{ marginLeft: "0.25rem" }}
+            >
+              {toggling ? "…" : health.domain.status === "paused" ? "Resume monitoring" : "Pause monitoring"}
+            </button>
+            <button
+              className="btn"
+              onClick={handleDelete}
+              disabled={deleting}
+              style={{ marginLeft: "0.25rem", color: "#e55" }}
+            >
+              {deleting ? "Deleting…" : "Delete domain"}
             </button>
             {recheckMsg && (
               <span className="changed-pill">{recheckMsg}</span>
