@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 # Builds all MX Sentinel Go service binaries into one minimal image. The schemas,
 # migrations, and event contracts are embedded in the binaries (go:embed), so the final
 # image needs nothing but the static executables. Each compose service selects its binary

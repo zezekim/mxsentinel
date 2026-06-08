@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 # Builds the Next.js dashboard as a standalone server bundle.
 #
 # NEXT_PUBLIC_* values are baked at BUILD time. The browser talks to the API directly, so
