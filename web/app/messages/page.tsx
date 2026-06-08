@@ -10,6 +10,63 @@ function fmt(ts: string): string {
   return new Date(ts).toLocaleString();
 }
 
+function outcomeBadgeClass(outcome: string) {
+  if (outcome === "delivered") return "badge-ok";
+  if (outcome === "bounced" || outcome === "rejected") return "badge-critical";
+  if (outcome === "deferred") return "badge-warning";
+  return "badge-unknown";
+}
+
+function DetailRow({ m, cols }: { m: Message; cols: number }) {
+  const fields: [string, string | number | null | undefined][] = [
+    ["Time",             fmt(m.event_time)],
+    ["Event ID",         m.event_id],
+    ["Message-ID",       m.message_id],
+    ["Outcome",          m.outcome],
+    ["Event type",       m.event_type],
+    ["From domain",      m.from_domain],
+    ["Recipient domain", m.recipient_domain],
+    ["Provider",         m.provider],
+    ["Relay IP",         m.relay_ip],
+    ["SMTP user",        m.sasl_username],
+    ["SMTP code",        m.smtp_code || null],
+    ["Enhanced status",  m.enhanced_status],
+    ["Bounce class",     m.bounce_class],
+    ["Response text",    m.response_text],
+  ];
+
+  return (
+    <tr>
+      <td
+        colSpan={cols}
+        style={{
+          background: "#f9f9f9",
+          padding: "0.75rem 1rem",
+          borderTop: "none",
+        }}
+      >
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+            gap: "0.35rem 1.5rem",
+            fontSize: "0.8rem",
+          }}
+        >
+          {fields.map(([label, value]) =>
+            value ? (
+              <div key={label} style={{ display: "flex", gap: "0.4rem", alignItems: "flex-start" }}>
+                <span style={{ color: "#888", flexShrink: 0, minWidth: "110px" }}>{label}:</span>
+                <span style={{ wordBreak: "break-all", color: "#222" }}>{value}</span>
+              </div>
+            ) : null
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
 export default function MessagesPage() {
   const [domain, setDomain] = useState("");
   const [sender, setSender] = useState("");
@@ -22,6 +79,7 @@ export default function MessagesPage() {
   const [count, setCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   const buildQuery = useCallback(() => {
     const params = new URLSearchParams();
@@ -38,6 +96,7 @@ export default function MessagesPage() {
   const fetchMessages = useCallback(() => {
     setLoading(true);
     setError(null);
+    setExpanded(null);
     apiGet<MessagesResponse>(`/v1/messages?${buildQuery()}`)
       .then((d) => {
         setMessages(d.messages);
@@ -47,7 +106,6 @@ export default function MessagesPage() {
       .finally(() => setLoading(false));
   }, [buildQuery]);
 
-  // Load on mount
   useEffect(() => {
     fetchMessages();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -58,46 +116,25 @@ export default function MessagesPage() {
     fetchMessages();
   }
 
+  function toggleRow(id: string) {
+    setExpanded((prev) => (prev === id ? null : id));
+  }
+
+  const COLS = 8;
+
   return (
     <>
       <h1>Message Explorer</h1>
 
       <form className="filters" onSubmit={handleSearch}>
-        <input
-          type="text"
-          placeholder="Domain"
-          value={domain}
-          onChange={(e) => setDomain(e.target.value)}
-        />
-        <input
-          type="text"
-          placeholder="Sender"
-          value={sender}
-          onChange={(e) => setSender(e.target.value)}
-        />
-        <input
-          type="text"
-          placeholder="Message-ID"
-          value={messageId}
-          onChange={(e) => setMessageId(e.target.value)}
-        />
-        <input
-          type="text"
-          placeholder="Provider"
-          value={provider}
-          onChange={(e) => setProvider(e.target.value)}
-        />
-        <input
-          type="text"
-          placeholder="SMTP user"
-          value={user}
-          onChange={(e) => setUser(e.target.value)}
-        />
+        <input type="text" placeholder="Domain"    value={domain}    onChange={(e) => setDomain(e.target.value)} />
+        <input type="text" placeholder="Sender"    value={sender}    onChange={(e) => setSender(e.target.value)} />
+        <input type="text" placeholder="Message-ID" value={messageId} onChange={(e) => setMessageId(e.target.value)} />
+        <input type="text" placeholder="Provider"  value={provider}  onChange={(e) => setProvider(e.target.value)} />
+        <input type="text" placeholder="SMTP user" value={user}      onChange={(e) => setUser(e.target.value)} />
         <select value={outcome} onChange={(e) => setOutcome(e.target.value)}>
           {OUTCOMES.map((o) => (
-            <option key={o} value={o}>
-              {o.charAt(0).toUpperCase() + o.slice(1)}
-            </option>
+            <option key={o} value={o}>{o.charAt(0).toUpperCase() + o.slice(1)}</option>
           ))}
         </select>
         <button type="submit">Search</button>
@@ -119,94 +156,73 @@ export default function MessagesPage() {
               <table>
                 <thead>
                   <tr>
+                    <th></th>
                     <th>Time</th>
                     <th>Outcome</th>
                     <th>From Domain</th>
                     <th>Recipient Domain</th>
                     <th>Provider</th>
-                    <th>SMTP User</th>
                     <th>Code</th>
                     <th>Reason</th>
-                    <th>Message-ID</th>
-                    <th>Relay IP</th>
                   </tr>
                 </thead>
                 <tbody>
                   {messages.map((m) => {
+                    const isExpanded = expanded === m.event_id;
                     const isFailed = m.outcome === "bounced" || m.outcome === "rejected" || m.outcome === "deferred";
-                    const reason = [m.bounce_class, m.response_text].filter(Boolean).join(" — ");
+                    const failColor = m.outcome === "deferred" ? "#b87d00" : "#c0392b";
+
                     return (
-                    <tr key={m.event_id}>
-                      <td style={{ whiteSpace: "nowrap" }}>{fmt(m.event_time)}</td>
-                      <td>
-                        <span
-                          className={`badge ${
-                            m.outcome === "delivered"
-                              ? "badge-ok"
-                              : m.outcome === "bounced" || m.outcome === "rejected"
-                              ? "badge-critical"
-                              : m.outcome === "deferred"
-                              ? "badge-warning"
-                              : "badge-unknown"
-                          }`}
+                      <>
+                        <tr
+                          key={m.event_id}
+                          onClick={() => toggleRow(m.event_id)}
+                          style={{ cursor: "pointer" }}
                         >
-                          {m.outcome}
-                        </span>
-                      </td>
-                      <td>{m.from_domain}</td>
-                      <td>{m.recipient_domain}</td>
-                      <td>{m.provider}</td>
-                      <td>{m.sasl_username || "—"}</td>
-                      <td style={{ whiteSpace: "nowrap" }}>
-                        {m.smtp_code || "—"}
-                        {m.enhanced_status && (
-                          <span style={{ color: "#888", fontSize: "0.75rem", marginLeft: "0.3rem" }}>
-                            {m.enhanced_status}
-                          </span>
-                        )}
-                      </td>
-                      <td>
-                        {isFailed && reason ? (
-                          <span
-                            title={reason}
-                            style={{
-                              fontSize: "0.8rem",
-                              maxWidth: "280px",
-                              display: "inline-block",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                              verticalAlign: "middle",
-                              color: m.outcome === "deferred" ? "#b87d00" : "#c0392b",
-                            }}
-                          >
-                            {m.bounce_class && (
-                              <strong style={{ marginRight: "0.3rem" }}>[{m.bounce_class}]</strong>
+                          <td style={{ width: "1.5rem", color: "#aaa", fontSize: "0.7rem", userSelect: "none" }}>
+                            {isExpanded ? "▼" : "▶"}
+                          </td>
+                          <td style={{ whiteSpace: "nowrap" }}>{fmt(m.event_time)}</td>
+                          <td>
+                            <span className={`badge ${outcomeBadgeClass(m.outcome)}`}>
+                              {m.outcome}
+                            </span>
+                          </td>
+                          <td>{m.from_domain}</td>
+                          <td>{m.recipient_domain}</td>
+                          <td>{m.provider}</td>
+                          <td style={{ whiteSpace: "nowrap" }}>
+                            {m.smtp_code || "—"}
+                            {m.enhanced_status && (
+                              <span style={{ color: "#888", fontSize: "0.75rem", marginLeft: "0.3rem" }}>
+                                {m.enhanced_status}
+                              </span>
                             )}
-                            {m.response_text}
-                          </span>
-                        ) : (
-                          <span style={{ color: "#aaa" }}>—</span>
-                        )}
-                      </td>
-                      <td>
-                        <span
-                          style={{
-                            fontSize: "0.75rem",
-                            maxWidth: "200px",
-                            display: "inline-block",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                            verticalAlign: "middle",
-                          }}
-                          title={m.message_id}
-                        >
-                          {m.message_id || "—"}
-                        </span>
-                      </td>
-                      <td>{m.relay_ip || "—"}</td>
-                    </tr>
+                          </td>
+                          <td style={{ maxWidth: "260px" }}>
+                            {isFailed && (m.bounce_class || m.response_text) ? (
+                              <span style={{ fontSize: "0.8rem", color: failColor }}>
+                                {m.bounce_class && (
+                                  <strong style={{ marginRight: "0.3rem" }}>[{m.bounce_class}]</strong>
+                                )}
+                                <span style={{
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                  display: "inline-block",
+                                  maxWidth: "200px",
+                                  verticalAlign: "middle",
+                                }}>
+                                  {m.response_text}
+                                </span>
+                              </span>
+                            ) : (
+                              <span style={{ color: "#aaa" }}>—</span>
+                            )}
+                          </td>
+                        </tr>
+                        {isExpanded && <DetailRow m={m} cols={COLS} />}
+                      </>
                     );
                   })}
                 </tbody>
