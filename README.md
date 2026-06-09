@@ -33,8 +33,8 @@ Collect → Normalize → Correlate → Analyze → Explain → Remediate
 | [`schemas/postgres/`](schemas/postgres/) | PostgreSQL DDL — tenants, domains, users, SMTP submission users, DNS snapshots, alert rules, configuration. |
 | [`schemas/clickhouse/`](schemas/clickhouse/) | ClickHouse DDL — SMTP telemetry events and analytics rollups. |
 | [`schemas/events/`](schemas/events/) | JSON Schema contracts for every event family published to the bus. |
-| [`cmd/`](cmd/) | Service entrypoints: `apid` (REST API), `dnsd`, `telemetryd`, `ingestd` (lands SMTP telemetry in ClickHouse), `dmarcd`, `correld`, `repd`, `incidentd`, `aid`, `abused` (outbound-abuse guard), `rbld` (DNSBL self-monitor + auto-pull), `anomalyd` (send-volume anomalies), `fbld` (feedback-loop + Postmaster reputation), `authwatchd` (SASL compromise detection), `cpaneld` (cPanel sync + WHMCS metrics push), and the `mxctl` operator CLI. |
-| [`internal/`](internal/) | Implementation packages: `api`, `dns`, `telemetry`, `dmarc`, `correlate`, `reputation`, `ratelimit`, `rbl`, `anomaly`, `fbl`, `authwatch`, `ai`, `auth`, `config`, `crypto` (AES-256-GCM credential encryption), `cpanel`, `whmcs`, `store/*`. |
+| [`cmd/`](cmd/) | Service entrypoints: `apid` (REST API), `dnsd`, `telemetryd`, `ingestd` (lands SMTP telemetry in ClickHouse), `dmarcd`, `correld`, `repd`, `incidentd`, `aid`, `abused` (outbound-abuse guard), `rbld` (DNSBL self-monitor + auto-pull), `anomalyd` (send-volume anomalies), `fbld` (feedback-loop + Postmaster reputation), `authwatchd` (SASL compromise detection), `cpaneld` (cPanel sync + WHMCS metrics push), `dmarcpulld` (pulls DMARC aggregate reports from an external receiver), and the `mxctl` operator CLI. |
+| [`internal/`](internal/) | Implementation packages: `api`, `dns`, `telemetry`, `dmarc`, `dmarcpull` (external DMARC pull client + syncer), `correlate`, `reputation`, `ratelimit`, `rbl`, `anomaly`, `fbl`, `authwatch`, `ai`, `auth`, `config`, `crypto` (AES-256-GCM credential encryption), `cpanel`, `whmcs`, `store/*`. |
 | [`web/`](web/) | Next.js dashboard (domains, messages, top senders, IP health, velocity, reputation, auth security, DMARC, incidents, SMTP users, alerts, scheduled reports, IP warm-up, integrations, settings, docs, account). |
 | [`deploy/`](deploy/) | Docker Compose stack, Caddy, the [`install.sh`](deploy/install.sh) installer, and the host [`mxctl`](deploy/mxctl) wrapper. |
 | [`docs/api-v1.md`](docs/api-v1.md) | REST API reference (auth, scopes, every `/v1` endpoint). |
@@ -83,6 +83,7 @@ make run-dnsd      # DNS Intelligence validator: snapshot monitored domains, emi
 make replay        # replay a sample Postfix maillog into the bus as smtp.* events
 make run-apid      # REST API on :8080 (domain health, messages, DMARC, users, SMTP users, settings)
 make run-cpaneld   # cPanel/WHMCS sync + metrics push daemon
+make run-dmarcpulld # pull DMARC aggregate reports from an external receiver (dmarc.squidix.org)
 make apikey        # mint an API token for the demo tenant (printed once)
 make web-dev       # Next.js dashboard dev server (web/) -> http://localhost:3000
 make test          # unit tests (no services needed)
@@ -119,6 +120,16 @@ on a recurring schedule), **IP Warm-up** (day-by-day ramp plans for new sending 
 selector, DMARC defaults, relay host, and the DNS resolver used for validation), an
 in-app **Docs** runbook, and **Account** (self-service password change). Point it at the
 API with `NEXT_PUBLIC_API_TOKEN` (from `make apikey`), or just log in.
+
+**DMARC pull integration.** `cmd/dmarcpulld` polls an external DMARC aggregate report
+receiver (dmarc.squidix.org) via a REST API and writes reports directly into the same
+Postgres + ClickHouse stores as `dmarcd`. A cursor per tenant (`dmarc_pull_cursors`)
+tracks the last synced `date_end` so each poll fetches only new reports. Reports cover
+**all mail claiming to be from the monitored domains** — not just mail relayed through MX
+Sentinel — giving the full DMARC alignment picture: delivery rates, DKIM/SPF pass rates,
+and source IPs across every receiving provider (Google, Microsoft, Yahoo, etc.). Configure
+via `MXS_DMARCP_BASEURL`, `MXS_DMARCP_APIKEY`, `MXS_DMARCP_TENANTID`, and
+`MXS_DMARCP_INTERVAL` (default 1 hour).
 
 **cPanel/WHMCS integration.** For hosting providers running cPanel/WHM, `cmd/cpaneld`
 syncs account and domain metadata from WHM using the JSON API v1, stores it in
