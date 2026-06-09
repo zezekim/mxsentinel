@@ -1,5 +1,5 @@
-// Package dmarcpull pulls DMARC aggregate report data from dmarc.squidix.org
-// and feeds it into MX Sentinel's Postgres + ClickHouse stores.
+// Package dmarcpull pulls DMARC aggregate report data from an external DMARC
+// receiver API and feeds it into MX Sentinel's Postgres + ClickHouse stores.
 package dmarcpull
 
 import (
@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// Client is an HTTP client for the dmarc.squidix.org pull API.
+// Client is an HTTP client for the external DMARC receiver pull API.
 type Client struct {
 	baseURL string
 	apiKey  string
@@ -20,7 +20,7 @@ type Client struct {
 }
 
 // NewClient constructs a Client. baseURL should be the full base path,
-// e.g. "https://dmarc.squidix.org/api/v1".
+// e.g. "https://dmarc.example.com/api/v1".
 func NewClient(baseURL, apiKey string) *Client {
 	return &Client{
 		baseURL: baseURL,

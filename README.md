@@ -83,7 +83,7 @@ make run-dnsd      # DNS Intelligence validator: snapshot monitored domains, emi
 make replay        # replay a sample Postfix maillog into the bus as smtp.* events
 make run-apid      # REST API on :8080 (domain health, messages, DMARC, users, SMTP users, settings)
 make run-cpaneld   # cPanel/WHMCS sync + metrics push daemon
-make run-dmarcpulld # pull DMARC aggregate reports from an external receiver (dmarc.squidix.org)
+make run-dmarcpulld # pull DMARC aggregate reports from an external receiver API
 make apikey        # mint an API token for the demo tenant (printed once)
 make web-dev       # Next.js dashboard dev server (web/) -> http://localhost:3000
 make test          # unit tests (no services needed)
@@ -122,7 +122,7 @@ in-app **Docs** runbook, and **Account** (self-service password change). Point i
 API with `NEXT_PUBLIC_API_TOKEN` (from `make apikey`), or just log in.
 
 **DMARC pull integration.** `cmd/dmarcpulld` polls an external DMARC aggregate report
-receiver (dmarc.squidix.org) via a REST API and writes reports directly into the same
+receiver via a REST API and writes reports directly into the same
 Postgres + ClickHouse stores as `dmarcd`. A cursor per tenant (`dmarc_pull_cursors`)
 tracks the last synced `date_end` so each poll fetches only new reports. Reports cover
 **all mail claiming to be from the monitored domains** — not just mail relayed through MX

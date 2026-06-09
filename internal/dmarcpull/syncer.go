@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	pullObjectKeyPrefix = "pull://dmarc.squidix.org/"
+	pullObjectKeyPrefix = "pull://dmarc-receiver/"
 	pageLimit           = 100
 )
 

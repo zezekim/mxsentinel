@@ -33,9 +33,9 @@ type Config struct {
 	DmarcPull   DmarcPullConfig   `yaml:"dmarcp"`
 }
 
-// DmarcPullConfig configures the dmarc.squidix.org pull integration.
+// DmarcPullConfig configures the external DMARC receiver pull integration.
 type DmarcPullConfig struct {
-	BaseURL      string `yaml:"baseurl"`      // e.g. https://dmarc.squidix.org/api/v1
+	BaseURL      string `yaml:"baseurl"`      // e.g. https://dmarc.example.com/api/v1
 	APIKey       string `yaml:"apikey"`
 	TenantID     string `yaml:"tenantid"`     // MX Sentinel tenant to attribute pulled reports to
 	Interval     int    `yaml:"interval"`     // seconds between polls; default 3600

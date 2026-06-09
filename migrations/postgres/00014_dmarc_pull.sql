@@ -1,5 +1,5 @@
 -- +goose Up
--- Tracks the sync cursor per tenant for the dmarc.squidix.org pull integration.
+-- Tracks the sync cursor per tenant for the external DMARC receiver pull integration.
 -- last_date_end is the date_end of the last successfully synced report batch;
 -- the puller passes this as `since` on the next poll to fetch only new reports.
 CREATE TABLE dmarc_pull_cursors (

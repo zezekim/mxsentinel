@@ -1,6 +1,6 @@
-// Command dmarcpulld pulls DMARC aggregate report data from dmarc.squidix.org
-// and writes it into MX Sentinel's Postgres + ClickHouse stores on a schedule.
-// Configure via MXS_DMARCP_* env vars or the dmarcp: section in mxsentinel.yaml.
+// Command dmarcpulld pulls DMARC aggregate report data from an external DMARC
+// receiver API and writes it into MX Sentinel's Postgres + ClickHouse stores on
+// a schedule. Configure via MXS_DMARCP_* env vars or the dmarcp: section in mxsentinel.yaml.
 package main
 
 import (

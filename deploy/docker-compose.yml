@@ -38,12 +38,13 @@ x-app-env: &app-env
   # Comma-separated; falls back to RELAY_NODE_IP (single IP) when unset.
   RELAY_EGRESS_IPS: "${RELAY_EGRESS_IPS:-}"
   RELAY_NODE_IP: "${RELAY_NODE_IP:-}"
-  # DMARC pull integration (dmarc.squidix.org)
+  # DMARC pull integration (external receiver)
   MXS_DMARCP_BASEURL: "${MXS_DMARCP_BASEURL:-}"
   MXS_DMARCP_APIKEY: "${MXS_DMARCP_APIKEY:-}"
   MXS_DMARCP_TENANTID: "${MXS_DMARCP_TENANTID:-}"
   MXS_DMARCP_INTERVAL: "${MXS_DMARCP_INTERVAL:-3600}"
   MXS_DMARCP_LOOKBACKDAYS: "${MXS_DMARCP_LOOKBACKDAYS:-30}"
+  MXS_DMARCP_EXTRA_HOST: "${MXS_DMARCP_EXTRA_HOST:-}"
 
 # Shared definition for every Go service: one image (built from the root Dockerfile),
 # only started under the "app" profile.
@@ -225,13 +226,13 @@ services:
       migrate: {condition: service_completed_successfully}
       minio: {condition: service_healthy}
 
-  # Pulls DMARC aggregate reports from dmarc.squidix.org on a schedule.
+  # Pulls DMARC aggregate reports from an external receiver API on a schedule.
   # Requires MXS_DMARCP_BASEURL, MXS_DMARCP_APIKEY, MXS_DMARCP_TENANTID in deploy/.env.
+  # If the receiver is on a private host, set MXS_DMARCP_EXTRA_HOST="hostname:ip" in .env.
   dmarcpulld:
     <<: *app
     command: ["/usr/local/bin/dmarcpulld"]
-    extra_hosts:
-      - "dmarc.squidix.org:104.161.38.254"
+    extra_hosts: "${MXS_DMARCP_EXTRA_HOST:-[]}"
     depends_on:
       migrate: {condition: service_completed_successfully}
 
