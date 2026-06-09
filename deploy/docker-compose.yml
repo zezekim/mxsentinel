@@ -38,6 +38,12 @@ x-app-env: &app-env
   # Comma-separated; falls back to RELAY_NODE_IP (single IP) when unset.
   RELAY_EGRESS_IPS: "${RELAY_EGRESS_IPS:-}"
   RELAY_NODE_IP: "${RELAY_NODE_IP:-}"
+  # DMARC pull integration (dmarc.squidix.org)
+  MXS_DMARCP_BASEURL: "${MXS_DMARCP_BASEURL:-}"
+  MXS_DMARCP_APIKEY: "${MXS_DMARCP_APIKEY:-}"
+  MXS_DMARCP_TENANTID: "${MXS_DMARCP_TENANTID:-}"
+  MXS_DMARCP_INTERVAL: "${MXS_DMARCP_INTERVAL:-3600}"
+  MXS_DMARCP_LOOKBACKDAYS: "${MXS_DMARCP_LOOKBACKDAYS:-30}"
 
 # Shared definition for every Go service: one image (built from the root Dockerfile),
 # only started under the "app" profile.
@@ -218,6 +224,14 @@ services:
     depends_on:
       migrate: {condition: service_completed_successfully}
       minio: {condition: service_healthy}
+
+  # Pulls DMARC aggregate reports from dmarc.squidix.org on a schedule.
+  # Requires MXS_DMARCP_BASEURL, MXS_DMARCP_APIKEY, MXS_DMARCP_TENANTID in deploy/.env.
+  dmarcpulld:
+    <<: *app
+    command: ["/usr/local/bin/dmarcpulld"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
 
   # RBL/DNSBL self-monitor for the relay's own egress IPs. On a ticker (RBL_INTERVAL, default
   # 15m) it checks every RELAY_EGRESS_IPS entry (falls back to RELAY_NODE_IP) against each
