@@ -44,6 +44,7 @@ func (s *Store) DMARCReportExists(ctx context.Context, tenantID, orgName, report
 type DMARCReportPointer struct {
 	TenantID    string
 	DomainID    string // may be "" (NULL)
+	DomainName  string // plain-text fallback when DomainID is empty
 	OrgName     string
 	ReportID    string
 	DateBegin   any // time.Time
@@ -56,13 +57,13 @@ type DMARCReportPointer struct {
 // (tenant, org, report_id); the returned id is empty in that case.
 func (s *Store) InsertDMARCReport(ctx context.Context, p DMARCReportPointer) (string, error) {
 	const q = `INSERT INTO dmarc_reports
-	    (tenant_id, domain_id, org_name, report_id, date_begin, date_end, object_key, record_count)
-	    VALUES ($1, NULLIF($2,'')::uuid, $3, $4, $5, $6, $7, $8)
+	    (tenant_id, domain_id, domain_name, org_name, report_id, date_begin, date_end, object_key, record_count)
+	    VALUES ($1, NULLIF($2,'')::uuid, $3, $4, $5, $6, $7, $8, $9)
 	    ON CONFLICT (tenant_id, org_name, report_id) DO NOTHING
 	    RETURNING id`
 	var id string
 	err := s.Pool.QueryRow(ctx, q,
-		p.TenantID, p.DomainID, p.OrgName, p.ReportID, p.DateBegin, p.DateEnd, p.ObjectKey, p.RecordCount,
+		p.TenantID, p.DomainID, p.DomainName, p.OrgName, p.ReportID, p.DateBegin, p.DateEnd, p.ObjectKey, p.RecordCount,
 	).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil // conflict: already inserted
@@ -94,7 +95,7 @@ func (s *Store) ListDMARCReports(ctx context.Context, tenantID, domain string, l
 		limit = 500
 	}
 	args := []any{tenantID}
-	q := `SELECT r.id, r.org_name, r.report_id, COALESCE(d.name, ''),
+	q := `SELECT r.id, r.org_name, r.report_id, COALESCE(NULLIF(d.name,''), r.domain_name, ''),
 	             r.date_begin, r.date_end, r.record_count
 	      FROM dmarc_reports r
 	      LEFT JOIN domains d ON d.id = r.domain_id

@@ -150,6 +150,7 @@ func (s *Syncer) syncReport(ctx context.Context, rpt RemoteReport) (int, error) 
 	_, err = s.pg.InsertDMARCReport(ctx, pgstore.DMARCReportPointer{
 		TenantID:    s.tenantID,
 		DomainID:    domainID,
+		DomainName:  rpt.Domain,
 		OrgName:     rpt.OrgName,
 		ReportID:    rpt.ReportID,
 		DateBegin:   rpt.DateBegin,

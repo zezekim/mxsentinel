@@ -109,6 +109,7 @@ func (i *Ingestor) IngestFile(ctx context.Context, filename string, data []byte)
 	if _, err := i.reports.InsertDMARCReport(ctx, pgstore.DMARCReportPointer{
 		TenantID:    tenantID,
 		DomainID:    domainID,
+		DomainName:  rep.Domain,
 		OrgName:     rep.OrgName,
 		ReportID:    rep.ReportID,
 		DateBegin:   rep.DateBegin,
