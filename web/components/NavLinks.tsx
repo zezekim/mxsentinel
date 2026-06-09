@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { me, logout, getToken, type Me } from "@/lib/api";
+import { me, logout, getToken, clearToken, type Me } from "@/lib/api";
 
 // Inline SVG icons (16x16 viewBox, stroke-based)
 const Icons = {
@@ -87,7 +87,12 @@ export default function NavLinks() {
   }, []);
 
   async function handleLogout() {
-    await logout();
+    try {
+      await logout();
+    } catch {
+      // API unreachable — clear token locally and redirect anyway
+    }
+    clearToken();
     window.location.href = "/login";
   }
 
