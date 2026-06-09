@@ -16,8 +16,8 @@ Collect → Normalize → Correlate → Analyze → Explain → Remediate
 > **Status:** Implemented. Phases 1–3 are built — relay telemetry, DNS intelligence,
 > DMARC ingestion, correlation, reputation, incidents, and local-AI diagnostics — running
 > as a Go service mesh behind a Next.js dashboard, with a one-command VPS installer. Phase
-> 4 work has begun: RBAC, a public REST API, SMTP relay/submission-user management, and
-> tenant settings already ship. Stack: [`docs/tech-stack.md`](docs/tech-stack.md).
+> 4 work is well under way: RBAC, a public REST API, SMTP relay/submission-user management,
+> tenant settings, and cPanel/WHMCS integration all ship today. Stack: [`docs/tech-stack.md`](docs/tech-stack.md).
 
 ---
 
@@ -33,11 +33,12 @@ Collect → Normalize → Correlate → Analyze → Explain → Remediate
 | [`schemas/postgres/`](schemas/postgres/) | PostgreSQL DDL — tenants, domains, users, SMTP submission users, DNS snapshots, alert rules, configuration. |
 | [`schemas/clickhouse/`](schemas/clickhouse/) | ClickHouse DDL — SMTP telemetry events and analytics rollups. |
 | [`schemas/events/`](schemas/events/) | JSON Schema contracts for every event family published to the bus. |
-| [`cmd/`](cmd/) | Service entrypoints: `apid` (REST API), `dnsd`, `telemetryd`, `ingestd` (lands SMTP telemetry in ClickHouse), `dmarcd`, `correld`, `repd`, `incidentd`, `aid`, `abused` (outbound-abuse guard), `rbld` (DNSBL self-monitor + auto-pull), `anomalyd` (send-volume anomalies), `fbld` (feedback-loop + Postmaster reputation), `authwatchd` (SASL compromise detection), and the `mxctl` operator CLI. |
-| [`internal/`](internal/) | Implementation packages: `api`, `dns`, `telemetry`, `dmarc`, `correlate`, `reputation`, `ratelimit`, `rbl`, `anomaly`, `fbl`, `authwatch`, `ai`, `auth`, `config`, `store/*`. |
-| [`web/`](web/) | Next.js dashboard (domains, messages, top senders, IP health, velocity, reputation, auth security, DMARC, incidents, SMTP users, settings, docs, account). |
+| [`cmd/`](cmd/) | Service entrypoints: `apid` (REST API), `dnsd`, `telemetryd`, `ingestd` (lands SMTP telemetry in ClickHouse), `dmarcd`, `correld`, `repd`, `incidentd`, `aid`, `abused` (outbound-abuse guard), `rbld` (DNSBL self-monitor + auto-pull), `anomalyd` (send-volume anomalies), `fbld` (feedback-loop + Postmaster reputation), `authwatchd` (SASL compromise detection), `cpaneld` (cPanel sync + WHMCS metrics push), and the `mxctl` operator CLI. |
+| [`internal/`](internal/) | Implementation packages: `api`, `dns`, `telemetry`, `dmarc`, `correlate`, `reputation`, `ratelimit`, `rbl`, `anomaly`, `fbl`, `authwatch`, `ai`, `auth`, `config`, `crypto` (AES-256-GCM credential encryption), `cpanel`, `whmcs`, `store/*`. |
+| [`web/`](web/) | Next.js dashboard (domains, messages, top senders, IP health, velocity, reputation, auth security, DMARC, incidents, SMTP users, alerts, scheduled reports, IP warm-up, integrations, settings, docs, account). |
 | [`deploy/`](deploy/) | Docker Compose stack, Caddy, the [`install.sh`](deploy/install.sh) installer, and the host [`mxctl`](deploy/mxctl) wrapper. |
 | [`docs/api-v1.md`](docs/api-v1.md) | REST API reference (auth, scopes, every `/v1` endpoint). |
+| [`docs/integrations-api.md`](docs/integrations-api.md) | Integrations API reference (cPanel server, WHMCS connection, metrics export endpoints). |
 | [`docs/deploy-vps.md`](docs/deploy-vps.md) · [`docs/deploy-relay.md`](docs/deploy-relay.md) · [`docs/smarthost.md`](docs/smarthost.md) | VPS runbook, Postfix relay setup, and smarthost client configuration. |
 
 ---
@@ -62,16 +63,16 @@ Collect → Normalize → Correlate → Analyze → Explain → Remediate
 | **1 — Foundation** *(complete)* | Get data flowing | Relay telemetry, DNS validator, DMARC ingestion, Postgres schema, dashboard MVP. |
 | **2 — Intelligence** *(complete)* | Make data mean something | Correlation engine, provider analytics, rejection analysis, reputation tracking. |
 | **3 — AI Diagnostics** *(current)* | Explain & recommend | Root-cause analysis, anomaly detection, remediation recommendations. |
-| **4 — Enterprise** *(in progress)* | Scale & isolate | RBAC, public REST API, and SMTP relay/submission management ship today; HA relay clusters, multi-region, and tenant federation remain. |
+| **4 — Enterprise** *(in progress)* | Scale & isolate | RBAC, public REST API, SMTP relay/submission management, alerts, scheduled reports, IP warm-up advisor, and cPanel/WHMCS integration ship today; HA relay clusters, multi-region, and tenant federation remain. |
 
 Phase 1 is fully specified in [`docs/phase-1-plan.md`](docs/phase-1-plan.md).
 
 ---
 
-## Local development (Phase 1 substrate)
+## Local development
 
 The Go substrate (event bus, stores, migrations, operator CLI) is in place. Requires Go
-1.26+ and Docker.
+1.22+ and Docker.
 
 ```bash
 make up            # start Postgres, ClickHouse, Redis, NATS (JetStream), MinIO
@@ -81,6 +82,7 @@ make selftest      # publish + read back one of each event family
 make run-dnsd      # DNS Intelligence validator: snapshot monitored domains, emit events
 make replay        # replay a sample Postfix maillog into the bus as smtp.* events
 make run-apid      # REST API on :8080 (domain health, messages, DMARC, users, SMTP users, settings)
+make run-cpaneld   # cPanel/WHMCS sync + metrics push daemon
 make apikey        # mint an API token for the demo tenant (printed once)
 make web-dev       # Next.js dashboard dev server (web/) -> http://localhost:3000
 make test          # unit tests (no services needed)
@@ -110,10 +112,23 @@ ranked **Top Senders** view (volume / detected spam / rejections, broken down by
 sender, and sending domain), and DMARC reports with alignment — all tenant-scoped via
 Bearer tokens. The **Next.js dashboard** in [`web/`](web/) renders those screens, plus the
 outbound-security pages (below), **SMTP Users** (manage the relay's submission
-credentials), **Settings** (SPF include endpoint, DKIM selector, DMARC defaults, relay
-host, and the DNS resolver used for validation), an in-app **Docs** runbook, and
-**Account** (self-service password change). Point it at the API with
-`NEXT_PUBLIC_API_TOKEN` (from `make apikey`), or just log in.
+credentials), **Alerts** (configurable rules + notification channels for DNS, reputation,
+and incident signals), **Scheduled Reports** (email DNS/DMARC/incident/reputation digests
+on a recurring schedule), **IP Warm-up** (day-by-day ramp plans for new sending IPs),
+**Integrations** (cPanel/WHMCS — below), **Settings** (SPF include endpoint, DKIM
+selector, DMARC defaults, relay host, and the DNS resolver used for validation), an
+in-app **Docs** runbook, and **Account** (self-service password change). Point it at the
+API with `NEXT_PUBLIC_API_TOKEN` (from `make apikey`), or just log in.
+
+**cPanel/WHMCS integration.** For hosting providers running cPanel/WHM, `cmd/cpaneld`
+syncs account and domain metadata from WHM using the JSON API v1, stores it in
+`cpanel_servers` / `cpanel_accounts` / `cpanel_domains`, and periodically pushes per-account
+email metrics to WHMCS via `AddBillableItem` (amount=0.00 — visibility only, no
+auto-invoicing). The account→domain map is used to resolve `smtp_events.from_domain` back
+to the owning cPanel account and ultimately to the WHMCS client record (matched by
+`owner_email` first, domain lookup as fallback). Credentials are encrypted at rest with
+AES-256-GCM (`MXS_ENCRYPTION_KEY`) and are write-only — never returned by the API.
+See [`docs/integrations-api.md`](docs/integrations-api.md) for the full REST reference.
 
 **Outbound relay management.** Beyond observing mail, the optional on-box Postfix relay is
 managed from the same control plane. SMTP submission users (the SASL credentials a
