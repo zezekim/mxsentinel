@@ -217,6 +217,7 @@ export default function ReportsPage() {
         <h1 style={{ margin: 0 }}>Scheduled Reports</h1>
         <button
           type="button"
+          className="btn btn-sm"
           onClick={() => {
             resetForm();
             setShowForm((v) => !v);
@@ -301,7 +302,7 @@ export default function ReportsPage() {
 
           {formError && <p className="state-msg error" style={{ margin: 0 }}>{formError}</p>}
 
-          <button type="submit" disabled={creating}>
+          <button type="submit" className="btn btn-primary btn-sm" disabled={creating}>
             {creating ? "Creating…" : "Create Schedule"}
           </button>
         </form>

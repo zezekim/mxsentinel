@@ -693,6 +693,139 @@ table a:hover {
   background: var(--red-bg);
 }
 
+/* ── Unstyled buttons get a sensible default ── */
+button:not([class]),
+button[class=""] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  height: 32px;
+  padding: 0 0.85rem;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-1);
+  font-size: 0.84rem;
+  font-weight: 500;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: background 0.12s;
+  white-space: nowrap;
+}
+
+button:not([class]):hover,
+button[class=""]:hover {
+  background: var(--surface-2);
+}
+
+button:not([class]):disabled,
+button[class=""]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Tabs (used in Alerts, Integrations, Docs) ── */
+.tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1.5rem;
+}
+
+.tab-btn {
+  padding: 0.5rem 1.25rem;
+  font-size: 0.9375rem;
+  font-weight: 400;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  color: var(--text-2);
+  font-family: var(--font);
+  transition: color 0.12s, border-color 0.12s;
+  white-space: nowrap;
+  height: auto;
+}
+
+.tab-btn:hover {
+  color: var(--text-1);
+  background: none;
+  border-bottom-color: var(--border-strong);
+}
+
+.tab-btn.tab-active {
+  font-weight: 600;
+  color: var(--indigo);
+  border-bottom: 2px solid var(--indigo);
+  background: none;
+}
+
+/* ── Section block + header (Alerts, etc.) ── */
+.section-block {
+  margin-bottom: 2rem;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.section-header h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-1);
+}
+
+/* ── Small danger button ── */
+.btn-danger-sm {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 0.6rem;
+  border-radius: var(--r-sm);
+  border: 1px solid #fecaca;
+  background: transparent;
+  color: var(--red-text);
+  font-size: 0.76rem;
+  font-weight: 500;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.btn-danger-sm:hover {
+  background: var(--red-bg);
+}
+
+.btn-danger-sm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── btn-secondary (used alongside btn in some forms) ── */
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 0.85rem;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 0.84rem;
+  font-weight: 500;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.btn-secondary:hover {
+  background: var(--surface-2);
+}
+
 /* ============================================================
    13. Action Row Buttons
    ============================================================ */

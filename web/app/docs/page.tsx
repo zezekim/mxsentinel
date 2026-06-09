@@ -1,3 +1,7 @@
+"use client";
+
+import { useState } from "react";
+
 const eximConfig = `# WHM > Exim Configuration Manager > Advanced Editor
 
 # --- ROUTERS START ---
@@ -28,7 +32,7 @@ function Code({ children }: { children: string }) {
   return <pre className="doc-code">{children}</pre>;
 }
 
-export default function DocsPage() {
+function CpanelSetupTab() {
   return (
     <div className="doc-wrap">
       <h1>Connect a cPanel / WHM server</h1>
@@ -128,5 +132,216 @@ export default function DocsPage() {
         <code>docs/deploy-relay.md</code> for the relay-side runbook.
       </p>
     </div>
+  );
+}
+
+function IntegrationsApiTab() {
+  return (
+    <div className="doc-wrap">
+      <h1>Integrations API</h1>
+      <p className="section-desc">
+        MX Sentinel can sync with cPanel/WHM servers to discover the account→domain mapping,
+        aggregate email telemetry per cPanel account, and push metrics to WHMCS for billing
+        visibility. All WHM and WHMCS API calls are made server-side — credentials never reach
+        the browser.
+      </p>
+
+      <h2>Pipeline</h2>
+      <ol className="doc-list">
+        <li><strong>Sync</strong> — <code>cpaneld</code> polls WHM API → discovers accounts + domain types</li>
+        <li><strong>Match</strong> — <code>smtp_events.from_domain</code> is resolved against <code>cpanel_domains</code> in PostgreSQL</li>
+        <li><strong>Aggregate</strong> — ClickHouse groups by <code>from_domain</code>; Go joins and sums per account</li>
+        <li><strong>Push</strong> — WHMCS <code>AddBillableItem</code> records a summary per client</li>
+      </ol>
+
+      <h2>Authentication</h2>
+      <p>
+        All <code>/v1/integrations/*</code> endpoints require a <code>Bearer</code> token.
+        Mutation endpoints require <strong>admin</strong> scope; read endpoints require <strong>read</strong> scope.
+      </p>
+
+      <h2>Configuration</h2>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Variable</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><code>MXS_ENCRYPTION_KEY</code></td>
+              <td>
+                64-char hex (32 bytes). AES-256-GCM key for stored credentials.
+                Generate: <code>openssl rand -hex 32</code>. If unset, credentials stored as plaintext.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2>cPanel Server Endpoints</h2>
+
+      <h3><code>GET /v1/integrations/cpanel</code></h3>
+      <p>List all configured WHM servers. <code>api_token</code> is always redacted as <code>"***"</code>.</p>
+      <Code>{`{
+  "servers": [{
+    "id": "019123ab-...",
+    "label": "Production WHM",
+    "hostname": "server1.example.com",
+    "port": 2087,
+    "username": "root",
+    "api_token": "***",
+    "verify_ssl": true,
+    "sync_interval": 14400,
+    "sync_status": "ok",
+    "account_count": 142
+  }]
+}`}</Code>
+
+      <h3><code>POST /v1/integrations/cpanel</code> <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>admin</span></h3>
+      <p>
+        Add a WHM server. The API pings the WHM endpoint before saving — returns{" "}
+        <code>422 ping_failed</code> if unreachable.
+      </p>
+      <Code>{`{
+  "label": "Production WHM",
+  "hostname": "server1.example.com",
+  "port": 2087,
+  "username": "root",
+  "api_token": "WHM_API_TOKEN",
+  "verify_ssl": true,
+  "sync_interval": 14400
+}`}</Code>
+
+      <h3><code>PATCH /v1/integrations/cpanel/{"{id}"}</code> <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>admin</span></h3>
+      <p>Update label, verify_ssl, or sync_interval. Hostname/username/token are immutable — delete and recreate.</p>
+
+      <h3><code>DELETE /v1/integrations/cpanel/{"{id}"}</code> <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>admin</span></h3>
+      <p>Remove server and all synced accounts/domains (CASCADE). Returns <code>204</code>.</p>
+
+      <h3><code>POST /v1/integrations/cpanel/{"{id}"}/sync</code> <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>admin</span></h3>
+      <p>Trigger an immediate background sync. Returns <code>202 {"{ \"queued\": true }"}</code>. Poll <code>GET /{"{id}"}</code> for result.</p>
+
+      <h3><code>GET /v1/integrations/cpanel/{"{id}"}/accounts</code></h3>
+      <p>List synced cPanel accounts. Query params: <code>suspended=true|false</code>, <code>search</code>.</p>
+
+      <h3><code>GET /v1/integrations/cpanel/{"{id}"}/accounts/{"{username}"}</code></h3>
+      <p>Single account with all domains + 30-day email metrics (delivered, deferred, bounced, rejected, total).</p>
+
+      <h3><code>GET /v1/integrations/cpanel/lookup?domain={"{domain}"}</code></h3>
+      <p>Reverse lookup: which cPanel account owns a domain? Returns <code>404</code> if not synced.</p>
+
+      <h2>WHMCS Connection Endpoints</h2>
+
+      <h3><code>GET /v1/integrations/whmcs</code></h3>
+      <p>List all WHMCS connections. <code>api_secret</code> is never returned.</p>
+
+      <h3><code>POST /v1/integrations/whmcs</code> <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>admin</span></h3>
+      <p>Add a connection. Pings WHMCS before saving.</p>
+      <Code>{`{
+  "label": "Main Billing",
+  "api_url": "https://billing.example.com/includes/api.php",
+  "api_identifier": "YOUR_IDENTIFIER",
+  "api_secret": "YOUR_SECRET",
+  "push_frequency": "daily",
+  "push_metric_fields": ["delivered","bounced","rejected","total"]
+}`}</Code>
+
+      <h3><code>PATCH /v1/integrations/whmcs/{"{id}"}</code> <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>admin</span></h3>
+      <p>Update label, push_frequency, push_metric_fields, or enabled flag.</p>
+
+      <h3><code>DELETE /v1/integrations/whmcs/{"{id}"}</code> <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>admin</span></h3>
+      <p>Remove connection and push log. Returns <code>204</code>.</p>
+
+      <h3><code>POST /v1/integrations/whmcs/{"{id}"}/push</code> <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>admin</span></h3>
+      <p>Trigger immediate metrics push in background. Returns <code>202</code>.</p>
+
+      <h3><code>GET /v1/integrations/whmcs/{"{id}"}/log</code></h3>
+      <p>Push history. Query: <code>limit</code> (default 20, max 100). Status values: <code>ok</code> | <code>partial</code> | <code>error</code>.</p>
+
+      <h2>Metrics Export</h2>
+      <h3><code>GET /v1/integrations/metrics?server_id={"{id}"}&amp;from={"{RFC3339}"}&amp;to={"{RFC3339}"}</code></h3>
+      <p>Per-account email metrics for an arbitrary time range (default: last 30 days).</p>
+      <Code>{`{
+  "server_id": "019123ab-...",
+  "period": { "from": "2026-05-11T00:00:00Z", "to": "2026-06-10T00:00:00Z" },
+  "accounts": [{
+    "username": "johndoe",
+    "primary_domain": "johndoe.com",
+    "owner_email": "john@example.com",
+    "metrics": { "delivered": 4821, "deferred": 33, "bounced": 12, "rejected": 5, "total": 4871 }
+  }]
+}`}</Code>
+
+      <h2>WHMCS Push Behavior</h2>
+      <ol className="doc-list">
+        <li>All cPanel servers for the tenant are loaded from PostgreSQL</li>
+        <li>For each server the domain→account map is fetched</li>
+        <li>ClickHouse is queried for <code>from_domain</code> metric counts in the billing period</li>
+        <li>Results aggregated per cPanel account username in Go</li>
+        <li>For each account with activity: look up WHMCS client by <code>owner_email</code>, fall back to domain lookup, skip if not found</li>
+        <li><code>AddBillableItem</code> posted with <code>amount=0.00</code> and <code>invoiceaction=noinvoice</code></li>
+        <li>Result recorded in <code>whmcs_push_log</code></li>
+      </ol>
+      <p>Zero-activity accounts are skipped — no billable item is created.</p>
+
+      <h2>Running cpaneld</h2>
+      <Code>{`make run-cpaneld
+# or
+MXS_ENCRYPTION_KEY=$(openssl rand -hex 32) go run ./cmd/cpaneld`}</Code>
+      <p style={{ fontSize: "0.85rem", color: "#6b7280" }}>
+        Sync interval per server (default 4h) and push frequency per connection (daily/weekly) are
+        checked every 60 seconds by the daemon.
+      </p>
+
+      <h2>Error Codes</h2>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Code</th><th>HTTP</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td><code>not_found</code></td><td>404</td><td>Resource not found</td></tr>
+            <tr><td><code>ping_failed</code></td><td>422</td><td>Cannot connect with provided credentials</td></tr>
+            <tr><td><code>missing_field</code></td><td>400</td><td>Required field absent</td></tr>
+            <tr><td><code>invalid_body</code></td><td>400</td><td>Request body is not valid JSON</td></tr>
+            <tr><td><code>invalid_token</code></td><td>401</td><td>Bearer token missing or invalid</td></tr>
+            <tr><td><code>forbidden</code></td><td>403</td><td>Token lacks required scope</td></tr>
+            <tr><td><code>internal_error</code></td><td>500</td><td>Unexpected server error</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2>Security Notes</h2>
+      <ul className="doc-list">
+        <li>Credentials encrypted at rest with AES-256-GCM when <code>MXS_ENCRYPTION_KEY</code> is set</li>
+        <li><code>api_token</code> (WHM) and <code>api_secret</code> (WHMCS) are write-only — never returned in GET responses</li>
+        <li>All WHM and WHMCS API calls are made server-side — credentials never reach the browser</li>
+        <li><code>AddBillableItem</code> with <code>amount=0.00</code> — no charges are created automatically</li>
+      </ul>
+    </div>
+  );
+}
+
+type Tab = "cpanel-setup" | "integrations-api";
+
+export default function DocsPage() {
+  const [activeTab, setActiveTab] = useState<Tab>("cpanel-setup");
+
+  return (
+    <>
+      <div className="tabs">
+        <button
+          className={`tab-btn ${activeTab === "cpanel-setup" ? "tab-active" : ""}`}
+          onClick={() => setActiveTab("cpanel-setup")}
+        >
+          cPanel Setup
+        </button>
+        <button
+          className={`tab-btn ${activeTab === "integrations-api" ? "tab-active" : ""}`}
+          onClick={() => setActiveTab("integrations-api")}
+        >
+          Integrations API
+        </button>
+      </div>
+
+      {activeTab === "cpanel-setup" && <CpanelSetupTab />}
+      {activeTab === "integrations-api" && <IntegrationsApiTab />}
+    </>
   );
 }

@@ -413,7 +413,7 @@ function AlertRulesSection() {
       <div className="section-header">
         <h2>Alert Rules</h2>
         {!showForm && (
-          <button onClick={() => setShowForm(true)}>+ New Rule</button>
+          <button className="btn btn-sm" onClick={() => setShowForm(true)}>+ New Rule</button>
         )}
       </div>
 
@@ -532,7 +532,7 @@ function NotificationChannelsSection() {
       <div className="section-header">
         <h2>Notification Channels</h2>
         {!showForm && (
-          <button onClick={() => setShowForm(true)}>+ New Channel</button>
+          <button className="btn btn-sm" onClick={() => setShowForm(true)}>+ New Channel</button>
         )}
       </div>
 

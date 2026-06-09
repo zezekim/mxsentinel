@@ -391,10 +391,10 @@ function NewPlanForm({ onCreated, onCancel }: NewPlanFormProps) {
       </label>
 
       <div style={{ display: "flex", gap: 10 }}>
-        <button type="submit" disabled={submitting}>
+        <button type="submit" className="btn btn-primary btn-sm" disabled={submitting}>
           {submitting ? "Creating…" : "Create Plan"}
         </button>
-        <button type="button" onClick={onCancel} disabled={submitting}>
+        <button type="button" className="btn btn-sm" onClick={onCancel} disabled={submitting}>
           Cancel
         </button>
       </div>
