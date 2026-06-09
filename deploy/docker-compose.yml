@@ -230,7 +230,8 @@ services:
   dmarcpulld:
     <<: *app
     command: ["/usr/local/bin/dmarcpulld"]
-    dns: ["8.8.8.8", "1.1.1.1"]
+    extra_hosts:
+      - "dmarc.squidix.org:104.161.38.254"
     depends_on:
       migrate: {condition: service_completed_successfully}
 
