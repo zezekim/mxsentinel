@@ -294,6 +294,7 @@ main {
   width: 100%;
   text-align: left;
   display: flex;
+  flex-direction: row;
   align-items: center;
   gap: 0.6rem;
   padding: 0.45rem 0.65rem;
@@ -305,6 +306,13 @@ main {
   font-weight: 500;
   color: #6b7280;
   transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+.btn-logout svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
 }
 
 .btn-logout:hover {
@@ -697,6 +705,91 @@ table a:hover {
 /* ============================================================
    14. Forms
    ============================================================ */
+
+/* ── Inline form (used in integrations, alerts, reports pages) ── */
+.inline-form {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 1.25rem 1.5rem;
+  max-width: 560px;
+}
+
+/* form-row and inline-form-row are the same pattern:
+   a label column (fixed width) + an input/select column */
+.form-row,
+.inline-form-row {
+  display: grid;
+  grid-template-columns: 9rem 1fr;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.form-row label,
+.inline-form-row label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.form-row input,
+.form-row select,
+.form-row textarea,
+.inline-form-row input,
+.inline-form-row select,
+.inline-form-row textarea {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  padding: 0.45rem 0.7rem;
+  font-size: 0.875rem;
+  background: var(--bg);
+  color: var(--text-1);
+  font-family: var(--font);
+  width: 100%;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.form-row input:focus,
+.form-row select:focus,
+.form-row textarea:focus,
+.inline-form-row input:focus,
+.inline-form-row select:focus,
+.inline-form-row textarea:focus {
+  outline: none;
+  border-color: var(--indigo);
+  box-shadow: 0 0 0 3px var(--indigo-ring);
+}
+
+/* checkbox rows span both columns so the checkbox+label flow naturally */
+.form-row.checkbox-row,
+.inline-form-row.checkbox-row {
+  grid-template-columns: 1fr;
+}
+
+.form-row label.checkbox-label,
+.inline-form-row label.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.form-actions,
+.inline-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.inline-error {
+  color: #f87171;
+  font-size: 0.8125rem;
+  margin: 0.25rem 0;
+}
+
 .field {
   display: flex;
   flex-direction: column;

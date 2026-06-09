@@ -262,10 +262,10 @@ function NewRuleForm({
       </div>
       {error && <p className="state-msg error" style={{ margin: "0.25rem 0" }}>Error: {error}</p>}
       <div className="inline-form-actions">
-        <button type="submit" disabled={submitting}>
+        <button type="submit" className="btn btn-sm" disabled={submitting}>
           {submitting ? "Creating…" : "Create Rule"}
         </button>
-        <button type="button" className="btn-secondary" onClick={onCancel}>
+        <button type="button" className="btn btn-sm" onClick={onCancel}>
           Cancel
         </button>
       </div>
@@ -355,10 +355,10 @@ function NewChannelForm({
       </div>
       {error && <p className="state-msg error" style={{ margin: "0.25rem 0" }}>Error: {error}</p>}
       <div className="inline-form-actions">
-        <button type="submit" disabled={submitting}>
+        <button type="submit" className="btn btn-sm" disabled={submitting}>
           {submitting ? "Creating…" : "Create Channel"}
         </button>
-        <button type="button" className="btn-secondary" onClick={onCancel}>
+        <button type="button" className="btn btn-sm" onClick={onCancel}>
           Cancel
         </button>
       </div>

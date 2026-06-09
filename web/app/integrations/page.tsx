@@ -94,10 +94,10 @@ function CpanelForm({
         <label>Sync Interval (hours)</label>
         <input type="number" min={1} value={form.sync_interval_hours} onChange={(e) => set("sync_interval_hours", Number(e.target.value))} required />
       </div>
-      <div className="form-row">
-        <label>
+      <div className="form-row checkbox-row">
+        <label className="checkbox-label">
           <input type="checkbox" checked={form.verify_ssl} onChange={(e) => set("verify_ssl", e.target.checked)} />
-          {" "}Verify SSL
+          Verify SSL
         </label>
       </div>
       {err && <div className="inline-error">{err}</div>}
