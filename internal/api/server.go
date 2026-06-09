@@ -70,6 +70,37 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/smtp-users/{id}", s.requireScope(ScopeAdmin, s.handleDeleteSMTPUser))
 	mux.HandleFunc("GET /v1/settings", s.requireScope(ScopeRead, s.handleGetSettings))
 	mux.HandleFunc("PUT /v1/settings", s.requireScope(ScopeAdmin, s.handleUpdateSettings))
+	// Alert rules & notification channels
+	mux.HandleFunc("GET /v1/alert-rules", s.requireScope(ScopeRead, s.handleListAlertRules))
+	mux.HandleFunc("POST /v1/alert-rules", s.requireScope(ScopeWrite, s.handleCreateAlertRule))
+	mux.HandleFunc("PATCH /v1/alert-rules/{id}", s.requireScope(ScopeWrite, s.handleUpdateAlertRule))
+	mux.HandleFunc("DELETE /v1/alert-rules/{id}", s.requireScope(ScopeAdmin, s.handleDeleteAlertRule))
+	mux.HandleFunc("GET /v1/notification-channels", s.requireScope(ScopeRead, s.handleListChannels))
+	mux.HandleFunc("POST /v1/notification-channels", s.requireScope(ScopeWrite, s.handleCreateChannel))
+	mux.HandleFunc("DELETE /v1/notification-channels/{id}", s.requireScope(ScopeAdmin, s.handleDeleteChannel))
+	mux.HandleFunc("GET /v1/alert-events", s.requireScope(ScopeRead, s.handleListAlertEvents))
+	// Delivery heatmap
+	mux.HandleFunc("GET /v1/heatmap", s.requireScope(ScopeRead, s.handleHeatmap))
+	mux.HandleFunc("GET /v1/analytics/per-user", s.requireScope(ScopeRead, s.handlePerUserStats))
+	// DKIM key rotation
+	mux.HandleFunc("GET /v1/domains/{id}/dkim/plans", s.requireScope(ScopeRead, s.handleListDKIMPlans))
+	mux.HandleFunc("POST /v1/domains/{id}/dkim/plans", s.requireScope(ScopeWrite, s.handleCreateDKIMPlan))
+	mux.HandleFunc("PATCH /v1/domains/{id}/dkim/plans/{planID}", s.requireScope(ScopeWrite, s.handleUpdateDKIMPlan))
+	mux.HandleFunc("DELETE /v1/domains/{id}/dkim/plans/{planID}", s.requireScope(ScopeAdmin, s.handleDeleteDKIMPlan))
+	// Warm-up advisor
+	mux.HandleFunc("GET /v1/warmup", s.requireScope(ScopeRead, s.handleListWarmupPlans))
+	mux.HandleFunc("POST /v1/warmup", s.requireScope(ScopeWrite, s.handleCreateWarmupPlan))
+	mux.HandleFunc("GET /v1/warmup/{id}", s.requireScope(ScopeRead, s.handleGetWarmupPlan))
+	mux.HandleFunc("PATCH /v1/warmup/{id}", s.requireScope(ScopeWrite, s.handleUpdateWarmupPlan))
+	mux.HandleFunc("DELETE /v1/warmup/{id}", s.requireScope(ScopeAdmin, s.handleDeleteWarmupPlan))
+	// Scheduled reports
+	mux.HandleFunc("GET /v1/reports", s.requireScope(ScopeRead, s.handleListReports))
+	mux.HandleFunc("POST /v1/reports", s.requireScope(ScopeWrite, s.handleCreateReport))
+	mux.HandleFunc("PUT /v1/reports/{id}", s.requireScope(ScopeWrite, s.handleUpdateReport))
+	mux.HandleFunc("DELETE /v1/reports/{id}", s.requireScope(ScopeAdmin, s.handleDeleteReport))
+	mux.HandleFunc("POST /v1/reports/{id}/send-now", s.requireScope(ScopeWrite, s.handleSendReportNow))
+	// Auth security detail
+	mux.HandleFunc("GET /v1/auth-security/{user}/stats", s.requireScope(ScopeRead, s.handleAuthUserStats))
 
 	// The authed pipeline: auth → rate limit (per tenant) → audit (records mutations).
 	authed := chain(mux, s.requireAuth, s.rateLimit, s.auditWrites)
@@ -78,6 +109,7 @@ func (s *Server) Handler() http.Handler {
 	// specific pattern wins, so everything else falls through to the authed pipeline.
 	root := http.NewServeMux()
 	root.HandleFunc("POST /v1/auth/login", s.handleLogin)
+	root.HandleFunc("GET /v1/status/{slug}", s.handlePublicStatus)
 	root.Handle("/", authed)
 
 	// recoverer → logger → cors (handles preflight) → (login | authed routes)

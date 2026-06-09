@@ -561,3 +561,137 @@ export function lockCredential(
     { locked, reason },
   );
 }
+
+// ─── Alert Rules ──────────────────────────────────────────────────────────────
+
+export type AlertSignal = "dns_breakage" | "rejection_spike" | "blacklist_hit" | "tls_failure" | "complaint_spike" | "bounce_rate";
+
+export interface AlertRule {
+  id: string;
+  name: string;
+  signal: AlertSignal;
+  condition: Record<string, unknown>;
+  channel_ids: string[];
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NotificationChannel {
+  id: string;
+  kind: "email" | "slack" | "webhook" | "pagerduty";
+  name: string;
+  config: Record<string, unknown>;
+  enabled: boolean;
+  created_at: string;
+}
+
+export interface AlertEvent {
+  id: string;
+  rule_id: string;
+  state: "open" | "acknowledged" | "resolved" | "muted";
+  triggered_at: string;
+  resolved_at: string | null;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export const listAlertRules = () => apiGet<{ alert_rules: AlertRule[] }>("/v1/alert-rules");
+export const createAlertRule = (body: { name: string; signal: AlertSignal; condition: Record<string,unknown>; channel_ids: string[] }) => apiPost<AlertRule>("/v1/alert-rules", body);
+export const updateAlertRule = (id: string, body: { enabled: boolean; condition?: Record<string,unknown>; channel_ids?: string[] }) => apiPatch<AlertRule>(`/v1/alert-rules/${id}`, body);
+export const deleteAlertRule = (id: string) => apiDelete<{ deleted: boolean }>(`/v1/alert-rules/${id}`);
+export const listNotificationChannels = () => apiGet<{ channels: NotificationChannel[] }>("/v1/notification-channels");
+export const createNotificationChannel = (body: { kind: string; name: string; config: Record<string,unknown> }) => apiPost<NotificationChannel>("/v1/notification-channels", body);
+export const deleteNotificationChannel = (id: string) => apiDelete<{ deleted: boolean }>(`/v1/notification-channels/${id}`);
+export const listAlertEvents = () => apiGet<{ alert_events: AlertEvent[] }>("/v1/alert-events");
+
+// ─── Heatmap ──────────────────────────────────────────────────────────────────
+
+export interface HeatmapRow {
+  provider: string;
+  recipient_domain: string;
+  delivered: number;
+  deferred: number;
+  bounced: number;
+  rejected: number;
+  total: number;
+  acceptance_rate: number;
+}
+
+export const getHeatmap = (window: string, view: string) => apiGet<{ view: string; window: string; rows: HeatmapRow[] }>(`/v1/heatmap?window=${window}&view=${view}`);
+
+// ─── Warm-up ──────────────────────────────────────────────────────────────────
+
+export interface WarmupPlan {
+  id: string;
+  name: string;
+  ip_pool: string;
+  target_daily_volume: number;
+  current_day: number;
+  stage: "ramping" | "established" | "paused";
+  started_at: string;
+  completed_at: string | null;
+  created_at: string;
+}
+
+export interface WarmupDayStat {
+  day_number: number;
+  stat_date: string;
+  sent: number;
+  delivered: number;
+  bounced: number;
+  deferred: number;
+  acceptance_rate: number | null;
+}
+
+export const listWarmupPlans = () => apiGet<{ plans: WarmupPlan[] }>("/v1/warmup");
+export const createWarmupPlan = (body: { name: string; ip_pool: string; target_daily_volume: number }) => apiPost<WarmupPlan>("/v1/warmup", body);
+export const getWarmupPlan = (id: string) => apiGet<{ plan: WarmupPlan; day_stats: WarmupDayStat[]; recommended_today: number }>(`/v1/warmup/${id}`);
+export const updateWarmupPlan = (id: string, body: { stage: string }) => apiPatch<WarmupPlan>(`/v1/warmup/${id}`, body);
+export const deleteWarmupPlan = (id: string) => apiDelete<{ deleted: boolean }>(`/v1/warmup/${id}`);
+
+// ─── Reports ──────────────────────────────────────────────────────────────────
+
+export interface ReportSchedule {
+  id: string;
+  name: string;
+  frequency: "daily" | "weekly" | "monthly";
+  recipients: string[];
+  include_dns: boolean;
+  include_dmarc: boolean;
+  include_incidents: boolean;
+  include_reputation: boolean;
+  enabled: boolean;
+  last_sent_at: string | null;
+  next_run_at: string | null;
+  created_at: string;
+}
+
+export const listReports = () => apiGet<{ schedules: ReportSchedule[] }>("/v1/reports");
+export const createReport = (body: Omit<ReportSchedule, "id" | "created_at" | "last_sent_at" | "next_run_at">) => apiPost<ReportSchedule>("/v1/reports", body);
+export const updateReport = (id: string, body: Partial<ReportSchedule>) => apiPut<ReportSchedule>(`/v1/reports/${id}`, body);
+export const deleteReport = (id: string) => apiDelete<{ deleted: boolean }>(`/v1/reports/${id}`);
+export const sendReportNow = (id: string) => apiPost<{ queued: boolean }>(`/v1/reports/${id}/send-now`);
+
+// ─── DKIM Rotation ────────────────────────────────────────────────────────────
+
+export interface DKIMPlan {
+  id: string;
+  domain_id: string;
+  selector_old: string;
+  selector_new: string;
+  public_key_new: string;
+  key_bits: number;
+  stage: "pending" | "published" | "testing" | "active" | "retired";
+  dns_verified: boolean;
+  test_passed: boolean;
+  dns_record: string;
+  created_at: string;
+  activated_at: string | null;
+  retired_at: string | null;
+}
+
+export const listDKIMPlans = (domainId: string) => apiGet<{ plans: DKIMPlan[] }>(`/v1/domains/${domainId}/dkim/plans`);
+export const createDKIMPlan = (domainId: string, body: { selector?: string; key_bits?: number }) => apiPost<DKIMPlan>(`/v1/domains/${domainId}/dkim/plans`, body);
+export const updateDKIMPlan = (domainId: string, planId: string, body: { stage?: string; dns_verified?: boolean; test_passed?: boolean }) => apiPatch<DKIMPlan>(`/v1/domains/${domainId}/dkim/plans/${planId}`, body);
+export const deleteDKIMPlan = (domainId: string, planId: string) => apiDelete<{ deleted: boolean }>(`/v1/domains/${domainId}/dkim/plans/${planId}`);

@@ -1,0 +1,261 @@
+// Command reportd sends scheduled DNS health and deliverability digest emails.
+// It polls every 5 minutes for report schedules that are due, builds a
+// plain-text report, and delivers it via SMTP (or logs it when SMTP is not
+// configured).
+package main
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"net/smtp"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/zezekim/mxsentinel/internal/config"
+	"github.com/zezekim/mxsentinel/internal/obs"
+	chstore "github.com/zezekim/mxsentinel/internal/store/clickhouse"
+	pgstore "github.com/zezekim/mxsentinel/internal/store/postgres"
+)
+
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, "reportd:", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	cfg, err := config.Load(os.Getenv("MXS_CONFIG"))
+	if err != nil {
+		return err
+	}
+	log := obs.NewLogger("reportd", cfg.LogLevel)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	metrics := obs.NewMetrics()
+	srv := obs.NewServer(cfg.HTTPAddr, metrics, log)
+	srv.Start()
+	defer func() {
+		sctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(sctx)
+	}()
+
+	pg, err := pgstore.New(ctx, cfg.Postgres)
+	if err != nil {
+		return err
+	}
+	defer pg.Close()
+
+	ch, err := chstore.New(ctx, cfg.ClickHouse)
+	if err != nil {
+		return err
+	}
+	defer ch.Close() //nolint:errcheck
+
+	smtpHost := envDefault("MXS_SMTP_HOST", "")
+	smtpFrom := envDefault("MXS_SMTP_FROM", "reports@mxsentinel.local")
+
+	w := &worker{
+		log:      log,
+		pg:       pg,
+		smtpHost: smtpHost,
+		smtpFrom: smtpFrom,
+	}
+
+	srv.SetReady(true)
+	log.Info("reportd started", "poll_interval", "5m",
+		"smtp_host", smtpHost, "smtp_from", smtpFrom)
+
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	// Run once immediately on startup, then on each tick.
+	w.processSchedules(ctx)
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Info("reportd shutting down")
+			return nil
+		case <-ticker.C:
+			w.processSchedules(ctx)
+		}
+	}
+}
+
+// envDefault returns the value of the named environment variable, or def when
+// the variable is unset or empty.
+func envDefault(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+// worker holds shared state for the polling loop.
+type worker struct {
+	log      *slog.Logger
+	pg       *pgstore.Store
+	smtpHost string
+	smtpFrom string
+}
+
+// processSchedules fetches all due schedules and handles each one.
+func (w *worker) processSchedules(ctx context.Context) {
+	schedules, err := w.pg.GetDueReportSchedules(ctx)
+	if err != nil {
+		w.log.Error("failed to fetch due report schedules", "err", err)
+		return
+	}
+	if len(schedules) == 0 {
+		return
+	}
+	w.log.Info("processing due report schedules", "count", len(schedules))
+	for _, s := range schedules {
+		if err := w.handleSchedule(ctx, s); err != nil {
+			w.log.Error("failed to process report schedule",
+				"tenant_id", s.TenantID, "schedule_id", s.ID, "err", err)
+		}
+	}
+}
+
+// handleSchedule processes a single due schedule: fetches data, builds the
+// report, sends it, and advances next_run_at.
+func (w *worker) handleSchedule(ctx context.Context, s pgstore.ReportSchedule) error {
+	log := w.log.With("tenant_id", s.TenantID, "schedule_id", s.ID)
+	log.Info("building report", "name", s.Name, "frequency", s.Frequency)
+
+	var body strings.Builder
+
+	now := time.Now().UTC()
+	fmt.Fprintf(&body, "MX Sentinel Health Report - %s\n\n", now.Format("2006-01-02 15:04 UTC"))
+
+	// --- Open Incidents ---
+	if s.IncludeIncidents {
+		incidents, err := w.pg.ListIncidents(ctx, s.TenantID, "open", "", 20, 0)
+		if err != nil {
+			log.Error("failed to fetch incidents", "err", err)
+		} else {
+			fmt.Fprintf(&body, "== Open Incidents ==\n")
+			if len(incidents) == 0 {
+				fmt.Fprintf(&body, "No open incidents.\n")
+			} else {
+				for _, inc := range incidents {
+					fmt.Fprintf(&body, "- [%s] %s (domain: %s, severity: %s)\n",
+						inc.Kind, inc.Title, inc.Domain, inc.Severity)
+				}
+			}
+			fmt.Fprintf(&body, "\n")
+		}
+	}
+
+	// --- Domain Status ---
+	if s.IncludeDNS {
+		domains, err := w.pg.ListDomains(ctx, s.TenantID)
+		if err != nil {
+			log.Error("failed to fetch domains", "err", err)
+		} else {
+			fmt.Fprintf(&body, "== Domain Status ==\n")
+			if len(domains) == 0 {
+				fmt.Fprintf(&body, "No monitored domains.\n")
+			} else {
+				for _, d := range domains {
+					fmt.Fprintf(&body, "- %s  [%s]\n", d.Name, d.Status)
+				}
+			}
+			fmt.Fprintf(&body, "\n")
+		}
+	}
+
+	// --- DMARC Stats (placeholder) ---
+	if s.IncludeDMARC {
+		log.Info("fetching DMARC stats")
+		fmt.Fprintf(&body, "== DMARC Stats ==\n")
+		fmt.Fprintf(&body, "(DMARC aggregate stats are not yet included in this build.)\n\n")
+	}
+
+	// --- Reputation (placeholder) ---
+	if s.IncludeReputation {
+		log.Info("fetching reputation")
+		fmt.Fprintf(&body, "== Reputation ==\n")
+		fmt.Fprintf(&body, "(Reputation data is not yet included in this build.)\n\n")
+	}
+
+	fmt.Fprintf(&body, "Generated by MX Sentinel\n")
+
+	// --- Send or log ---
+	report := body.String()
+	if err := w.send(log, s, report); err != nil {
+		return fmt.Errorf("send report: %w", err)
+	}
+
+	// --- Advance next_run_at ---
+	nextRunAt := nextRun(now, s.Frequency)
+	if err := w.pg.MarkReportSent(ctx, s.ID, nextRunAt); err != nil {
+		return fmt.Errorf("mark report sent: %w", err)
+	}
+	log.Info("report sent and schedule advanced",
+		"next_run_at", nextRunAt.Format(time.RFC3339))
+	return nil
+}
+
+// send delivers the report body to all recipients via SMTP, or logs it when
+// SMTP is not configured.
+func (w *worker) send(log *slog.Logger, s pgstore.ReportSchedule, body string) error {
+	if w.smtpHost == "" {
+		log.Info("SMTP not configured; logging report content",
+			"tenant_id", s.TenantID, "schedule_id", s.ID,
+			"recipients", s.Recipients,
+			"report", body)
+		return nil
+	}
+	if len(s.Recipients) == 0 {
+		log.Warn("schedule has no recipients; skipping send",
+			"tenant_id", s.TenantID, "schedule_id", s.ID)
+		return nil
+	}
+
+	subject := fmt.Sprintf("MX Sentinel Health Report — %s", s.Name)
+	msg := buildMIME(w.smtpFrom, s.Recipients, subject, body)
+
+	if err := smtp.SendMail(w.smtpHost, nil, w.smtpFrom, s.Recipients, []byte(msg)); err != nil {
+		return fmt.Errorf("smtp sendmail to %v: %w", s.Recipients, err)
+	}
+	log.Info("report delivered via SMTP",
+		"tenant_id", s.TenantID, "schedule_id", s.ID,
+		"recipients", s.Recipients)
+	return nil
+}
+
+// buildMIME returns a minimal RFC 5322 message ready to hand to smtp.SendMail.
+func buildMIME(from string, to []string, subject, body string) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "From: %s\r\n", from)
+	fmt.Fprintf(&sb, "To: %s\r\n", strings.Join(to, ", "))
+	fmt.Fprintf(&sb, "Subject: %s\r\n", subject)
+	fmt.Fprintf(&sb, "MIME-Version: 1.0\r\n")
+	fmt.Fprintf(&sb, "Content-Type: text/plain; charset=utf-8\r\n")
+	fmt.Fprintf(&sb, "\r\n")
+	// RFC 5321 line-ending for the body.
+	sb.WriteString(strings.ReplaceAll(body, "\n", "\r\n"))
+	return sb.String()
+}
+
+// nextRun computes the next scheduled run time based on frequency.
+func nextRun(now time.Time, frequency string) time.Time {
+	switch frequency {
+	case "weekly":
+		return now.Add(7 * 24 * time.Hour)
+	case "monthly":
+		return now.Add(30 * 24 * time.Hour)
+	default: // "daily" and any unrecognised value
+		return now.Add(24 * time.Hour)
+	}
+}
