@@ -30,6 +30,16 @@ type Config struct {
 	ObjectStore ObjectStoreConfig `yaml:"objectstore"`
 	AI          AIConfig          `yaml:"ai"`
 	Integration IntegrationConfig `yaml:"integration"`
+	DmarcPull   DmarcPullConfig   `yaml:"dmarcp"`
+}
+
+// DmarcPullConfig configures the dmarc.squidix.org pull integration.
+type DmarcPullConfig struct {
+	BaseURL      string `yaml:"baseurl"`      // e.g. https://dmarc.squidix.org/api/v1
+	APIKey       string `yaml:"apikey"`
+	TenantID     string `yaml:"tenantid"`     // MX Sentinel tenant to attribute pulled reports to
+	Interval     int    `yaml:"interval"`     // seconds between polls; default 3600
+	LookbackDays int    `yaml:"lookbackdays"` // on first run, how far back to fetch; default 30
 }
 
 // IntegrationConfig holds settings for external integrations (cPanel/WHMCS).
@@ -181,6 +191,16 @@ func applyEnv(c *Config) error {
 	}
 
 	setStr(&c.Integration.EncryptionKey, "MXS_ENCRYPTION_KEY")
+
+	setStr(&c.DmarcPull.BaseURL, "MXS_DMARCP_BASEURL")
+	setStr(&c.DmarcPull.APIKey, "MXS_DMARCP_APIKEY")
+	setStr(&c.DmarcPull.TenantID, "MXS_DMARCP_TENANTID")
+	if err := setInt(&c.DmarcPull.Interval, "MXS_DMARCP_INTERVAL"); err != nil {
+		return err
+	}
+	if err := setInt(&c.DmarcPull.LookbackDays, "MXS_DMARCP_LOOKBACKDAYS"); err != nil {
+		return err
+	}
 	return nil
 }
 

@@ -117,6 +117,10 @@ run-incidentd: ## Run the incident recorder (reputation/DNS events -> incidents)
 run-cpaneld: ## Run the cPanel/WHMCS sync + metrics push daemon
 	go run ./cmd/cpaneld
 
+.PHONY: run-dmarcpulld
+run-dmarcpulld: ## Pull DMARC reports from dmarc.squidix.org into Postgres + ClickHouse
+	go run ./cmd/dmarcpulld
+
 .PHONY: run-apid
 run-apid: ## Run the REST API server on :8080
 	go run ./cmd/apid
