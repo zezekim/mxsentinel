@@ -230,6 +230,7 @@ services:
   dmarcpulld:
     <<: *app
     command: ["/usr/local/bin/dmarcpulld"]
+    dns: ["8.8.8.8", "1.1.1.1"]
     depends_on:
       migrate: {condition: service_completed_successfully}
 
