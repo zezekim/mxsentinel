@@ -25,6 +25,7 @@ const Icons = {
   user: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>,
   book: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>,
   logOut: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>,
+  plug: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8H6a1 1 0 0 0-1 1v4a5 5 0 0 0 10 0V9a1 1 0 0 0-1-1Z"/></svg>,
 };
 
 const navSections = [
@@ -65,6 +66,12 @@ const navSections = [
     label: "Reporting",
     links: [
       { href: "/reports", label: "Reports", icon: Icons.calendar },
+    ],
+  },
+  {
+    label: "Integrations",
+    links: [
+      { href: "/integrations", label: "cPanel / WHMCS", icon: Icons.plug },
     ],
   },
   {

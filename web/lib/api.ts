@@ -695,3 +695,54 @@ export const listDKIMPlans = (domainId: string) => apiGet<{ plans: DKIMPlan[] }>
 export const createDKIMPlan = (domainId: string, body: { selector?: string; key_bits?: number }) => apiPost<DKIMPlan>(`/v1/domains/${domainId}/dkim/plans`, body);
 export const updateDKIMPlan = (domainId: string, planId: string, body: { stage?: string; dns_verified?: boolean; test_passed?: boolean }) => apiPatch<DKIMPlan>(`/v1/domains/${domainId}/dkim/plans/${planId}`, body);
 export const deleteDKIMPlan = (domainId: string, planId: string) => apiDelete<{ deleted: boolean }>(`/v1/domains/${domainId}/dkim/plans/${planId}`);
+
+// ─── Integrations: cPanel / WHMCS ─────────────────────────────────────────────
+
+export interface CpanelServer {
+  id: string;
+  label: string;
+  hostname: string;
+  port: number;
+  username: string;
+  verify_ssl: boolean;
+  sync_interval: number;
+  last_synced_at: string | null;
+  sync_status: "pending" | "syncing" | "ok" | "error";
+  sync_error: string;
+  account_count: number;
+  created_at: string;
+}
+
+export interface CpanelAccount {
+  id: string;
+  server_id: string;
+  username: string;
+  primary_domain: string;
+  owner_email: string;
+  plan: string;
+  suspended: boolean;
+  disk_used_mb: number;
+  synced_at: string;
+}
+
+export interface WhmcsConnection {
+  id: string;
+  label: string;
+  api_url: string;
+  api_identifier: string;
+  push_frequency: "daily" | "weekly";
+  push_metric_fields: string[];
+  enabled: boolean;
+  last_pushed_at: string | null;
+  created_at: string;
+}
+
+export interface WhmcsPushLogEntry {
+  id: string;
+  pushed_at: string;
+  accounts_pushed: number;
+  status: "ok" | "partial" | "error";
+  error_detail: string;
+  period_start: string;
+  period_end: string;
+}

@@ -16,6 +16,7 @@ import (
 	"github.com/zezekim/mxsentinel/internal/api"
 	"github.com/zezekim/mxsentinel/internal/auth"
 	"github.com/zezekim/mxsentinel/internal/config"
+	"github.com/zezekim/mxsentinel/internal/crypto"
 	dnsx "github.com/zezekim/mxsentinel/internal/dns"
 	"github.com/zezekim/mxsentinel/internal/obs"
 	"github.com/zezekim/mxsentinel/internal/ratelimit"
@@ -87,6 +88,16 @@ func run(addr, corsOrigin string, rateLimit int) error {
 
 	resolver := dnsx.NewSystemResolver(5 * time.Second)
 	apiSrv := api.New(pg, ch, resolver, log, corsOrigin, limiter, sessions)
+
+	// Wire credential encryptor for integrations (cPanel/WHMCS).
+	enc, encrypted, err := crypto.NewEncryptor(cfg.Integration.EncryptionKey)
+	if err != nil {
+		return fmt.Errorf("integration encryptor: %w", err)
+	}
+	if !encrypted {
+		log.Warn("MXS_ENCRYPTION_KEY not set — integration credentials stored as plaintext")
+	}
+	apiSrv = apiSrv.WithEncryptor(enc)
 
 	httpSrv := &http.Server{
 		Addr:              addr,

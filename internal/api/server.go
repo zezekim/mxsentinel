@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/zezekim/mxsentinel/internal/auth"
+	"github.com/zezekim/mxsentinel/internal/crypto"
 	dnsx "github.com/zezekim/mxsentinel/internal/dns"
 	chstore "github.com/zezekim/mxsentinel/internal/store/clickhouse"
 	pgstore "github.com/zezekim/mxsentinel/internal/store/postgres"
@@ -23,6 +24,7 @@ type Server struct {
 	corsOrigin string
 	limiter    Limiter           // nil disables rate limiting
 	sessions   auth.SessionStore // nil disables user login
+	enc        *crypto.Encryptor // nil = passthrough (plaintext credentials)
 }
 
 // New constructs the API server. corsOrigin is the Access-Control-Allow-Origin value
@@ -101,6 +103,23 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/reports/{id}/send-now", s.requireScope(ScopeWrite, s.handleSendReportNow))
 	// Auth security detail
 	mux.HandleFunc("GET /v1/auth-security/{user}/stats", s.requireScope(ScopeRead, s.handleAuthUserStats))
+	// cPanel / WHMCS integrations
+	mux.HandleFunc("GET /v1/integrations/cpanel", s.requireScope(ScopeRead, s.handleListCpanelServers))
+	mux.HandleFunc("POST /v1/integrations/cpanel", s.requireScope(ScopeAdmin, s.handleCreateCpanelServer))
+	mux.HandleFunc("GET /v1/integrations/cpanel/lookup", s.requireScope(ScopeRead, s.handleCpanelLookup))
+	mux.HandleFunc("GET /v1/integrations/cpanel/{id}", s.requireScope(ScopeRead, s.handleGetCpanelServer))
+	mux.HandleFunc("PATCH /v1/integrations/cpanel/{id}", s.requireScope(ScopeAdmin, s.handleUpdateCpanelServer))
+	mux.HandleFunc("DELETE /v1/integrations/cpanel/{id}", s.requireScope(ScopeAdmin, s.handleDeleteCpanelServer))
+	mux.HandleFunc("POST /v1/integrations/cpanel/{id}/sync", s.requireScope(ScopeAdmin, s.handleTriggerCpanelSync))
+	mux.HandleFunc("GET /v1/integrations/cpanel/{id}/accounts", s.requireScope(ScopeRead, s.handleListCpanelAccounts))
+	mux.HandleFunc("GET /v1/integrations/cpanel/{id}/accounts/{username}", s.requireScope(ScopeRead, s.handleGetCpanelAccount))
+	mux.HandleFunc("GET /v1/integrations/whmcs", s.requireScope(ScopeRead, s.handleListWhmcsConnections))
+	mux.HandleFunc("POST /v1/integrations/whmcs", s.requireScope(ScopeAdmin, s.handleCreateWhmcsConnection))
+	mux.HandleFunc("PATCH /v1/integrations/whmcs/{id}", s.requireScope(ScopeAdmin, s.handleUpdateWhmcsConnection))
+	mux.HandleFunc("DELETE /v1/integrations/whmcs/{id}", s.requireScope(ScopeAdmin, s.handleDeleteWhmcsConnection))
+	mux.HandleFunc("POST /v1/integrations/whmcs/{id}/push", s.requireScope(ScopeAdmin, s.handleTriggerWhmcsPush))
+	mux.HandleFunc("GET /v1/integrations/whmcs/{id}/log", s.requireScope(ScopeRead, s.handleWhmcsPushLog))
+	mux.HandleFunc("GET /v1/integrations/metrics", s.requireScope(ScopeRead, s.handleIntegrationMetrics))
 
 	// The authed pipeline: auth → rate limit (per tenant) → audit (records mutations).
 	authed := chain(mux, s.requireAuth, s.rateLimit, s.auditWrites)
@@ -114,6 +133,13 @@ func (s *Server) Handler() http.Handler {
 
 	// recoverer → logger → cors (handles preflight) → (login | authed routes)
 	return chain(root, s.recoverer, s.requestLogger, s.cors)
+}
+
+// WithEncryptor wires in the credential encryptor. If not called, credentials are stored
+// as plaintext (passthrough mode — acceptable for dev; production requires MXS_ENCRYPTION_KEY).
+func (s *Server) WithEncryptor(enc *crypto.Encryptor) *Server {
+	s.enc = enc
+	return s
 }
 
 // tenant returns the authenticated tenant id; handlers call this after requireAuth.

@@ -29,6 +29,16 @@ type Config struct {
 	NATS        NATSConfig        `yaml:"nats"`
 	ObjectStore ObjectStoreConfig `yaml:"objectstore"`
 	AI          AIConfig          `yaml:"ai"`
+	Integration IntegrationConfig `yaml:"integration"`
+}
+
+// IntegrationConfig holds settings for external integrations (cPanel/WHMCS).
+type IntegrationConfig struct {
+	// EncryptionKey is a 64-char hex string (32 bytes) used for AES-256-GCM encryption
+	// of stored credentials (cPanel API tokens, WHMCS secrets).
+	// Generate with: openssl rand -hex 32
+	// If empty, credentials are stored as plaintext with a startup warning.
+	EncryptionKey string `yaml:"encryptionkey"`
 }
 
 // AIConfig points the AI reasoning layer at a local OpenAI-compatible LLM endpoint
@@ -169,6 +179,8 @@ func applyEnv(c *Config) error {
 	if err := setInt(&c.AI.TimeoutSecs, "MXS_AI_TIMEOUTSECS"); err != nil {
 		return err
 	}
+
+	setStr(&c.Integration.EncryptionKey, "MXS_ENCRYPTION_KEY")
 	return nil
 }
 
