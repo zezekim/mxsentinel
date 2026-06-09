@@ -10,6 +10,26 @@ CLAUDE.md
 *.out
 coverage.*
 
+# Built binaries in repo root (go build ./cmd/... output)
+/apid
+/cpaneld
+/reportd
+/dmarcpulld
+/dmarcd
+/dnsd
+/correld
+/repd
+/incidentd
+/aid
+/abused
+/rbld
+/anomalyd
+/fbld
+/authwatchd
+/ingestd
+/telemetryd
+/mxctl
+
 # Runtime artifacts
 /dmarc-drop/
 telemetry-spool.ndjson
