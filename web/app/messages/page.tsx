@@ -74,6 +74,8 @@ export default function MessagesPage() {
   const [provider, setProvider] = useState("");
   const [user, setUser] = useState("");
   const [outcome, setOutcome] = useState("any");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [count, setCount] = useState<number | null>(null);
@@ -89,9 +91,11 @@ export default function MessagesPage() {
     if (provider) params.set("provider", provider);
     if (user) params.set("user", user);
     if (outcome !== "any") params.set("outcome", outcome);
+    if (dateFrom) params.set("since", new Date(`${dateFrom}T00:00:00`).toISOString());
+    if (dateTo) params.set("until", new Date(`${dateTo}T23:59:59.999`).toISOString());
     params.set("limit", "100");
     return params.toString();
-  }, [domain, sender, messageId, provider, user, outcome]);
+  }, [domain, sender, messageId, provider, user, outcome, dateFrom, dateTo]);
 
   const fetchMessages = useCallback(() => {
     setLoading(true);
@@ -137,7 +141,34 @@ export default function MessagesPage() {
             <option key={o} value={o}>{o.charAt(0).toUpperCase() + o.slice(1)}</option>
           ))}
         </select>
+        <label className="filter-date">
+          <span>From</span>
+          <input
+            type="date"
+            value={dateFrom}
+            max={dateTo || undefined}
+            onChange={(e) => setDateFrom(e.target.value)}
+          />
+        </label>
+        <label className="filter-date">
+          <span>To</span>
+          <input
+            type="date"
+            value={dateTo}
+            min={dateFrom || undefined}
+            onChange={(e) => setDateTo(e.target.value)}
+          />
+        </label>
         <button type="submit">Search</button>
+        {(dateFrom || dateTo) && (
+          <button
+            type="button"
+            className="filter-date-clear"
+            onClick={() => { setDateFrom(""); setDateTo(""); }}
+          >
+            Clear dates
+          </button>
+        )}
       </form>
 
       <LoadingError loading={loading} error={error} />
