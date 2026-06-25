@@ -1,0 +1,31 @@
+[Unit]
+Description=MX Sentinel cPanel plugin broker
+Documentation=https://github.com/zezekim/mxsentinel/blob/main/docs/cpanel-plugin.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/mxsentinel-plugin serve
+Environment=MXS_PLUGIN_CONFIG=/etc/mxsentinel/plugin.conf
+
+# Broker must be root to read /var/cpanel/users/* and resolve peer uids → accounts.
+User=root
+
+# Creates /run/mxsentinel-plugin (mode 0755) for the unix socket; cleaned on stop.
+RuntimeDirectory=mxsentinel-plugin
+RuntimeDirectoryMode=0755
+
+Restart=on-failure
+RestartSec=3
+
+# Hardening: the broker only needs outbound HTTPS, the config file, and cPanel state.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadOnlyPaths=/etc/mxsentinel /var/cpanel
+ReadWritePaths=/run/mxsentinel-plugin
+
+[Install]
+WantedBy=multi-user.target

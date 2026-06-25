@@ -1,0 +1,21 @@
+# MX Sentinel cPanel plugin — broker configuration.
+# Installed to /etc/mxsentinel/plugin.conf  (must be root-owned, mode 0600).
+#
+# This file is read ONLY by the root broker daemon (mxsentinel-plugin serve).
+# It holds the tenant API token, so it must never be readable by cPanel users.
+
+# Base URL of your MX Sentinel apid (no trailing slash).
+api_base = https://api.mxsentinel.example.com
+
+# A tenant API token (mxs_...) with at least `read` scope. Mint one with:
+#   make apikey            (dev)
+#   mxctl apikey create --tenant <slug> --scope read
+token = mxs_xxxxxxxx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# Verify the apid TLS certificate. Set to false only for an internal CA / self-signed
+# endpoint you control.
+verify_ssl = true
+
+# Unix socket the broker listens on and the CGI connects to. The default matches the
+# systemd RuntimeDirectory. Change only if you also change the unit + wrappers.
+socket_path = /run/mxsentinel-plugin/api.sock

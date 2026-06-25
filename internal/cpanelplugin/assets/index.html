@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MX Sentinel</title>
+<style>
+  :root {
+    --bg:#0f1419; --panel:#171d26; --panel2:#1d2530; --line:#2a3340;
+    --fg:#e6edf3; --muted:#8b98a9; --accent:#4c8dff;
+    --ok:#3fb950; --warn:#d29922; --err:#f85149; --info:#58a6ff;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  header { display:flex; align-items:center; gap:12px; padding:16px 22px;
+    border-bottom:1px solid var(--line); background:var(--panel); }
+  header h1 { font-size:16px; margin:0; font-weight:600; letter-spacing:.3px; }
+  header .logo { width:26px; height:26px; border-radius:6px; background:linear-gradient(135deg,#4c8dff,#7b5cff);
+    display:flex; align-items:center; justify-content:center; font-weight:700; color:#fff; font-size:13px; }
+  header .spacer { flex:1; }
+  .pill { font-size:12px; padding:3px 9px; border-radius:999px; border:1px solid var(--line);
+    color:var(--muted); background:var(--panel2); }
+  .pill.admin { color:#fff; background:#7b5cff33; border-color:#7b5cff; }
+  .pill.user { color:#fff; background:#4c8dff33; border-color:var(--accent); }
+  main { padding:22px; max-width:1100px; margin:0 auto; }
+  .banner { padding:12px 16px; border-radius:8px; margin-bottom:18px; font-size:13px; }
+  .banner.err { background:#f8514922; border:1px solid var(--err); color:#ffb4ad; }
+  .banner.info { background:#58a6ff1a; border:1px solid #285a9b; color:#a9d1ff; }
+  section { margin-bottom:26px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.6px; color:var(--muted);
+    margin:0 0 12px; font-weight:600; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:14px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  .card .name { font-weight:600; font-size:15px; word-break:break-all; }
+  .row { display:flex; align-items:center; gap:8px; }
+  .row.between { justify-content:space-between; }
+  .cats { display:flex; gap:6px; margin:12px 0; flex-wrap:wrap; }
+  .cat { font-size:11px; padding:3px 8px; border-radius:6px; font-weight:600; letter-spacing:.4px; }
+  .dot { width:9px; height:9px; border-radius:50%; display:inline-block; }
+  .s-pass,.s-ok,.s-healthy { background:var(--ok); }
+  .s-warn,.s-degraded { background:var(--warn); }
+  .s-fail,.s-error,.s-critical,.s-missing { background:var(--err); }
+  .s-unknown,.s-none { background:var(--muted); }
+  .cat.s-pass,.cat.s-ok,.cat.s-healthy { background:#3fb95022; color:#7ee787; }
+  .cat.s-warn,.cat.s-degraded { background:#d2992222; color:#e3b341; }
+  .cat.s-fail,.cat.s-error,.cat.s-critical,.cat.s-missing { background:#f8514922; color:#ff9a91; }
+  .cat.s-unknown,.cat.s-none { background:#8b98a922; color:var(--muted); }
+  .findings { margin-top:10px; border-top:1px solid var(--line); padding-top:10px; }
+  .finding { font-size:12.5px; padding:5px 0; color:var(--muted); display:flex; gap:8px; }
+  .finding b { color:var(--fg); font-weight:600; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th,td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.4px; }
+  .inc { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px 14px; margin-bottom:10px; }
+  .inc .sev { font-size:11px; font-weight:700; padding:2px 7px; border-radius:5px; text-transform:uppercase; }
+  .sev.critical,.sev.high { background:#f8514922; color:#ff9a91; }
+  .sev.medium,.sev.warn { background:#d2992222; color:#e3b341; }
+  .sev.low,.sev.info { background:#58a6ff22; color:#a9d1ff; }
+  .muted { color:var(--muted); }
+  .empty { color:var(--muted); padding:18px; text-align:center; border:1px dashed var(--line); border-radius:8px; }
+  .meta { font-size:12px; color:var(--muted); margin-top:4px; }
+  footer { padding:18px 22px; color:var(--muted); font-size:12px; border-top:1px solid var(--line); }
+  a { color:var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">MX</div>
+  <h1>MX Sentinel</h1>
+  <span id="mode" class="pill">loading…</span>
+  <div class="spacer"></div>
+  <span id="who" class="muted"></span>
+</header>
+<main>
+  <div id="banner"></div>
+  <div id="content"><p class="muted">Loading email infrastructure status…</p></div>
+</main>
+<footer>
+  MX Sentinel · email infrastructure observability · <span id="gen"></span>
+</footer>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, c => (
+  {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+const cls = (s) => "s-" + String(s || "unknown").toLowerCase();
+
+async function load() {
+  let data;
+  try {
+    const res = await fetch(window.location.pathname + "?api=summary", {
+      headers: {"Accept": "application/json"}, cache: "no-store" });
+    data = await res.json();
+  } catch (e) {
+    return banner("err", "Could not reach the MX Sentinel plugin backend.");
+  }
+  render(data);
+}
+
+function banner(kind, msg) {
+  $("banner").innerHTML = msg ? `<div class="banner ${kind}">${esc(msg)}</div>` : "";
+}
+
+function render(d) {
+  const modeEl = $("mode");
+  modeEl.textContent = d.mode === "admin" ? "Server admin" : "My account";
+  modeEl.className = "pill " + (d.mode || "");
+  $("who").textContent = d.username ? "Account: " + d.username : "";
+  $("gen").textContent = d.generated_at ? "generated " + new Date(d.generated_at).toLocaleString() : "";
+
+  if (d.error) banner("err", d.error);
+  else if (d.notice) banner("info", d.notice);
+  else banner("", "");
+
+  const out = [];
+  if (d.mode === "admin") out.push(adminTop(d));
+  out.push(domainsSection(d.domains || []));
+  out.push(incidentsSection(d.incidents || []));
+  $("content").innerHTML = out.join("");
+}
+
+function adminTop(d) {
+  const parts = ["<section><h2>Relay health</h2>"];
+  // Egress IP health
+  const ip = d.ip_health;
+  if (ip) {
+    const ips = ip.ips || ip.results || [];
+    const listed = ips.filter(x => x.listed || (x.listings && x.listings.length)).length;
+    parts.push(`<div class="card"><div class="row between"><div class="name">Egress IP reputation</div>
+      <span class="cat ${listed ? "s-fail" : "s-ok"}">${listed ? listed + " listed" : "all clear"}</span></div>
+      <div class="meta">${esc(ips.length)} sending IP(s) monitored against DNSBLs</div></div>`);
+  }
+  // Deliverability by provider
+  const prov = (d.deliverability && d.deliverability.providers) || [];
+  if (prov.length) {
+    let rows = prov.slice(0, 8).map(p => `<tr><td>${esc(p.provider)}</td>
+      <td>${esc(p.total)}</td>
+      <td>${(p.delivered_rate*100).toFixed(1)}%</td>
+      <td>${esc(p.bounced)}</td><td>${esc(p.rejected)}</td></tr>`).join("");
+    parts.push(`<div class="card" style="margin-top:14px"><div class="name">Deliverability by provider</div>
+      <table style="margin-top:10px"><tr><th>Provider</th><th>Total</th><th>Delivered</th><th>Bounced</th><th>Rejected</th></tr>
+      ${rows}</table></div>`);
+  }
+  parts.push("</section>");
+  return parts.join("");
+}
+
+function domainsSection(domains) {
+  if (!domains.length) return `<section><h2>Domains</h2><div class="empty">No monitored domains.</div></section>`;
+  const cards = domains.map(domainCard).join("");
+  return `<section><h2>Domains (${domains.length})</h2><div class="grid">${cards}</div></section>`;
+}
+
+function domainCard(d) {
+  const h = d.health || {};
+  const cats = h.categories || d.categories || {};
+  const order = ["spf","dkim","dmarc","mx"];
+  const catHtml = order.map(k => cats[k]
+    ? `<span class="cat ${cls(cats[k])}">${k.toUpperCase()} ${esc(cats[k])}</span>` : "").join("");
+  const overall = h.overall || d.overall || "unknown";
+  const findings = (h.findings || []).slice(0, 6).map(f =>
+    `<div class="finding"><span class="dot ${cls(f.severity)}" style="margin-top:5px"></span>
+      <div><b>${esc(f.category || f.code)}</b> — ${esc(f.message)}</div></div>`).join("");
+  const checked = (h.snapshot && h.snapshot.captured_at) || d.last_checked_at;
+  return `<div class="card">
+    <div class="row between"><span class="name">${esc(d.name)}</span>
+      <span class="cat ${cls(overall)}">${esc(overall)}</span></div>
+    <div class="cats">${catHtml || '<span class="muted">no posture data yet</span>'}</div>
+    ${findings ? `<div class="findings">${findings}</div>` : ""}
+    <div class="meta">${checked ? "last checked " + new Date(checked).toLocaleString() : "not yet checked"}</div>
+  </div>`;
+}
+
+function incidentsSection(incidents) {
+  if (!incidents.length)
+    return `<section><h2>Open incidents</h2><div class="empty">No open incidents. 🎉</div></section>`;
+  const items = incidents.map(i => `<div class="inc">
+    <div class="row between">
+      <div class="row"><span class="sev ${esc((i.severity||"").toLowerCase())}">${esc(i.severity||"")}</span>
+        <b>${esc(i.title || i.kind)}</b></div>
+      <span class="muted">${i.created_at ? new Date(i.created_at).toLocaleDateString() : ""}</span>
+    </div>
+    <div class="meta">${esc(i.domain || i.subject || "")}</div>
+    ${i.ai_summary ? `<div class="meta" style="margin-top:6px;color:#a9d1ff">${esc(i.ai_summary)}</div>` : ""}
+  </div>`).join("");
+  return `<section><h2>Open incidents (${incidents.length})</h2>${items}</section>`;
+}
+
+load();
+</script>
+</body>
+</html>

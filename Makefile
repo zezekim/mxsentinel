@@ -16,6 +16,11 @@ tidy: ## go mod tidy
 build: ## Build all binaries into ./bin
 	go build -o bin/ ./...
 
+.PHONY: build-cpanel-plugin
+build-cpanel-plugin: ## Cross-build the cPanel/WHM plugin for the server (GOOS/GOARCH overridable)
+	GOOS=$(or $(GOOS),linux) GOARCH=$(or $(GOARCH),amd64) go build -o bin/mxsentinel-plugin ./cmd/cpanel-plugin
+	@echo "built bin/mxsentinel-plugin — copy it + plugins/cpanel/ to the WHM box, then run plugins/cpanel/install.sh"
+
 .PHONY: vet
 vet: ## go vet
 	go vet ./...
