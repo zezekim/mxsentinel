@@ -50,3 +50,8 @@ telemetry-spool.ndjson
 *.swp
 .idea/
 .vscode/
+
+# local build artifacts
+/cpanel-plugin
+/mxsentinel-cpanel-plugin.tar.gz
+/mxsentinel-cpanel-plugin.zip
