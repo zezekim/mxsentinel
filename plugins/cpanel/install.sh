@@ -7,7 +7,8 @@
 # Flags:
 #   --bin PATH        Path to the mxsentinel-plugin binary (built for this server's OS/arch).
 #   --api-base URL    MX Sentinel apid base URL.        (or env MXS_API_BASE)
-#   --token TOKEN     Tenant API token with read scope. (or env MXS_API_TOKEN)
+#   --token TOKEN     Tenant API token with ADMIN scope (provisions the relay SMTP user).
+#                     (or env MXS_API_TOKEN)
 #   --no-verify-ssl   Disable TLS verification to apid (self-signed/internal CA).
 #   --whm-only        Install only the WHM admin plugin.
 #   --user-only       Install only the cPanel end-user plugin.
@@ -67,7 +68,7 @@ if [ -f "$CONF" ] && [ "$KEEP_CONFIG" = "1" ]; then
   echo "==> keeping existing $CONF"
 else
   if [ -z "$API_BASE" ]; then read -r -p "MX Sentinel API base URL: " API_BASE; fi
-  if [ -z "$API_TOKEN" ]; then read -r -p "Tenant API token (mxs_...): " API_TOKEN; fi
+  if [ -z "$API_TOKEN" ]; then read -r -p "Tenant API token (mxs_..., ADMIN scope): " API_TOKEN; fi
   [ -n "$API_BASE" ] && [ -n "$API_TOKEN" ] || { echo "api-base and token are required" >&2; exit 1; }
   echo "==> writing $CONF (root-only)"
   umask 077

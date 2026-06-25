@@ -1,6 +1,7 @@
 package cpanelplugin
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -142,4 +143,96 @@ func (u *upstream) RBLStatus(ctx context.Context) (json.RawMessage, error) {
 // it aggregates across all accounts, so it must never be exposed in a user scope).
 func (u *upstream) Deliverability(ctx context.Context) (json.RawMessage, error) {
 	return u.getRaw(ctx, "/v1/analytics/deliverability")
+}
+
+// postJSON performs an authenticated POST with a JSON body and decodes the response.
+func (u *upstream) postJSON(ctx context.Context, path string, body, out any) error {
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.base+path, bytes.NewReader(buf))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+u.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := u.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("call %s: %w", path, err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return fmt.Errorf("upstream %s: token rejected (status %d) — does it have admin scope?", path, resp.StatusCode)
+	}
+	if resp.StatusCode >= 400 {
+		// Surface the API's error message when present.
+		var e struct {
+			Error   string `json:"error"`
+			Message string `json:"message"`
+		}
+		_ = json.Unmarshal(raw, &e)
+		detail := strings.TrimSpace(e.Message + " " + e.Error)
+		if detail == "" {
+			detail = fmt.Sprintf("status %d", resp.StatusCode)
+		}
+		return fmt.Errorf("upstream %s: %s", path, detail)
+	}
+	if out != nil {
+		if err := json.Unmarshal(raw, out); err != nil {
+			return fmt.Errorf("decode %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
+// Settings mirrors the subset of apid's GET /v1/settings the relay installer needs
+// (internal/api/handlers_settings.go).
+type Settings struct {
+	SPFInclude   string `json:"spf_include"`
+	DKIMSelector string `json:"dkim_selector"`
+	DMARCPolicy  string `json:"dmarc_policy"`
+	DMARCRua     string `json:"dmarc_rua"`
+	RelayHost    string `json:"relay_host"`
+	RelayPort    int    `json:"relay_port"`
+}
+
+// GetSettings returns the tenant's relay + DNS defaults.
+func (u *upstream) GetSettings(ctx context.Context) (Settings, error) {
+	var s Settings
+	err := u.get(ctx, "/v1/settings", &s)
+	return s, err
+}
+
+// SMTPUser mirrors apid's smtpUserJSON (internal/api/handlers_smtp_users.go).
+type SMTPUser struct {
+	ID       string `json:"id"`
+	Username string `json:"username"`
+	Domain   string `json:"domain"`
+	Enabled  bool   `json:"enabled"`
+}
+
+// ListSMTPUsers returns the tenant's SMTP submission users (for reuse/idempotency).
+func (u *upstream) ListSMTPUsers(ctx context.Context) ([]SMTPUser, error) {
+	var out struct {
+		Users []SMTPUser `json:"users"`
+	}
+	if err := u.get(ctx, "/v1/smtp-users", &out); err != nil {
+		return nil, err
+	}
+	return out.Users, nil
+}
+
+// CreateSMTPUser provisions a SASL submission credential on the relay (admin scope).
+func (u *upstream) CreateSMTPUser(ctx context.Context, username, password, domain string) (SMTPUser, error) {
+	var out SMTPUser
+	err := u.postJSON(ctx, "/v1/smtp-users", map[string]string{
+		"username": username,
+		"password": password,
+		"domain":   domain,
+	}, &out)
+	return out, err
 }

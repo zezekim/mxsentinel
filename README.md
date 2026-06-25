@@ -37,10 +37,10 @@ Collect → Normalize → Correlate → Analyze → Explain → Remediate
 | [`internal/`](internal/) | Implementation packages: `api`, `dns`, `telemetry`, `dmarc`, `dmarcpull` (external DMARC pull client + syncer), `correlate`, `reputation`, `ratelimit`, `rbl`, `anomaly`, `fbl`, `authwatch`, `ai`, `auth`, `config`, `crypto` (AES-256-GCM credential encryption), `cpanel`, `whmcs`, `store/*`. |
 | [`web/`](web/) | Next.js dashboard (domains, messages, top senders, IP health, velocity, reputation, auth security, DMARC, incidents, SMTP users, alerts, scheduled reports, IP warm-up, integrations, settings, docs, account). |
 | [`deploy/`](deploy/) | Docker Compose stack, Caddy, the [`install.sh`](deploy/install.sh) installer, and the host [`mxctl`](deploy/mxctl) wrapper. |
-| [`plugins/cpanel/`](plugins/cpanel/) | On-server cPanel/WHM plugin (WHM admin + per-account cPanel views) that surfaces MX Sentinel data inside cPanel. See [`docs/cpanel-plugin.md`](docs/cpanel-plugin.md). |
+| [`plugins/cpanel/`](plugins/cpanel/) | On-server cPanel/WHM plugin: a WHM tool that points the server's Exim outbound at the MX Sentinel relay (provision credential, enable/disable, test, DNS), plus a read-only cPanel end-user status page. See [`docs/cpanel-plugin.md`](docs/cpanel-plugin.md). |
 | [`docs/api-v1.md`](docs/api-v1.md) | REST API reference (auth, scopes, every `/v1` endpoint). |
 | [`docs/integrations-api.md`](docs/integrations-api.md) | Integrations API reference (cPanel server, WHMCS connection, metrics export endpoints). |
-| [`docs/cpanel-plugin.md`](docs/cpanel-plugin.md) | On-server cPanel/WHM plugin: architecture, security model, install/uninstall, CloudLinux/CageFS notes. |
+| [`docs/cpanel-plugin.md`](docs/cpanel-plugin.md) | On-server cPanel/WHM relay installer: how Enable rewrites Exim (safely), security model, install/verify, CloudLinux/CageFS notes. |
 | [`docs/deploy-vps.md`](docs/deploy-vps.md) · [`docs/deploy-relay.md`](docs/deploy-relay.md) · [`docs/smarthost.md`](docs/smarthost.md) | VPS runbook, Postfix relay setup, and smarthost client configuration. |
 
 ---
