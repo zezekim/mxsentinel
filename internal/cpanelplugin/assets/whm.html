@@ -119,10 +119,13 @@ function render(st){
   if(on){btn.textContent="Disable relay routing";btn.className="danger";$("toggleNote").textContent="";}
   else{btn.textContent="Enable relay routing";btn.className="primary";}
 
+  // st.notice carries an API-reachability problem; show it first so a connectivity/token
+  // issue isn't misreported as "relay host not set".
   if(st.error)banner("err",st.error);
-  else if(!st.configured && !on){banner("info","Set a Relay Host in MX Sentinel → Settings before enabling.");btn.disabled=!st.configured;$("toggleNote").textContent="Relay host required.";}
-  else if(st.notice)banner("info",st.notice);
+  else if(st.notice)banner("err",st.notice);
+  else if(!st.configured && !on)banner("info","Set a Relay Host in MX Sentinel → Settings before enabling.");
   else banner("","");
+  if(!st.configured && !on){btn.disabled=true;$("toggleNote").textContent=st.notice?"Cannot reach MX Sentinel API — see above.":"Relay host required.";}
 }
 
 async function refresh(){
