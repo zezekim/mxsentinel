@@ -200,11 +200,14 @@ type Settings struct {
 	RelayPort    int    `json:"relay_port"`
 }
 
-// GetSettings returns the tenant's relay + DNS defaults.
+// GetSettings returns the tenant's relay + DNS defaults. apid wraps the payload as
+// {"settings": {...}}, so decode the wrapper.
 func (u *upstream) GetSettings(ctx context.Context) (Settings, error) {
-	var s Settings
-	err := u.get(ctx, "/v1/settings", &s)
-	return s, err
+	var out struct {
+		Settings Settings `json:"settings"`
+	}
+	err := u.get(ctx, "/v1/settings", &out)
+	return out.Settings, err
 }
 
 // SMTPUser mirrors apid's smtpUserJSON (internal/api/handlers_smtp_users.go).
