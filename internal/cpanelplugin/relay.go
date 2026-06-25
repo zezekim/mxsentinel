@@ -125,12 +125,17 @@ func (m *relayManager) Enable(ctx context.Context) (RelayStatus, error) {
 	}
 
 	state, _ := m.loadState()
-	if state.Username == "" || state.SMTPUserID == "" {
-		if err := m.provision(ctx, &state, host, port); err != nil {
+	state.RelayHost, state.RelayPort = host, port
+	if state.Username == "" || state.SMTPUserID == "" || state.Password == "" {
+		if err := m.provision(ctx, &state); err != nil {
 			return m.Status(ctx), err
 		}
+		// Persist the credential immediately — before touching Exim — so a later
+		// failure never orphans it (which previously forced "+timestamp" clones).
+		if err := m.saveState(state); err != nil {
+			return m.Status(ctx), fmt.Errorf("provisioned credential but failed to save state: %w", err)
+		}
 	}
-	state.RelayHost, state.RelayPort = host, port
 
 	if err := m.exim.apply(ctx, host, port, state.Username, state.Password); err != nil {
 		return m.Status(ctx), err
@@ -142,8 +147,10 @@ func (m *relayManager) Enable(ctx context.Context) (RelayStatus, error) {
 	return m.Status(ctx), nil
 }
 
-// provision mints a new SMTP submission credential via the API and records it in state.
-func (m *relayManager) provision(ctx context.Context, state *relayState, host string, port int) error {
+// provision sets a fresh SASL credential into state using a single canonical username.
+// If that username already exists on the tenant (e.g. a prior partial run), it reuses
+// that user and resets its password rather than minting a new "+timestamp" clone.
+func (m *relayManager) provision(ctx context.Context, state *relayState) error {
 	username := m.defaultUsername()
 	password, err := randPassword(28)
 	if err != nil {
@@ -151,23 +158,39 @@ func (m *relayManager) provision(ctx context.Context, state *relayState, host st
 	}
 	user, err := m.up.CreateSMTPUser(ctx, username, password, m.hostname)
 	if err != nil {
-		// Most likely a name/username collision from a prior partial run. Retry once
-		// with a unique suffix so a lost state file doesn't wedge the operator.
-		username2 := fmt.Sprintf("%s+%d@%s", strings.SplitN(username, "@", 2)[0], m.now().Unix(), m.hostOrName())
-		user, err = m.up.CreateSMTPUser(ctx, username2, password, m.hostname)
-		if err != nil {
+		// Likely a name collision with an existing credential — adopt it and reset
+		// its password to the one we just generated, so the canonical name is reused.
+		existing, lookupErr := m.findSMTPUser(ctx, username)
+		if lookupErr != nil || existing.ID == "" {
 			return fmt.Errorf("provision relay credential: %w", err)
 		}
-		username = username2
+		if rErr := m.up.ResetSMTPUserPassword(ctx, existing.ID, password); rErr != nil {
+			return fmt.Errorf("reset existing relay credential %q: %w", username, rErr)
+		}
+		user = existing
 	}
-	state.Username = user.Username
-	if state.Username == "" {
-		state.Username = username
+	state.Username = username
+	if user.Username != "" {
+		state.Username = user.Username
 	}
 	state.Password = password
 	state.SMTPUserID = user.ID
 	state.ProvisionedAt = m.now().UTC().Format(time.RFC3339)
 	return nil
+}
+
+// findSMTPUser looks up an SMTP user by exact username (case-insensitive).
+func (m *relayManager) findSMTPUser(ctx context.Context, username string) (SMTPUser, error) {
+	users, err := m.up.ListSMTPUsers(ctx)
+	if err != nil {
+		return SMTPUser{}, err
+	}
+	for _, u := range users {
+		if strings.EqualFold(u.Username, username) {
+			return u, nil
+		}
+	}
+	return SMTPUser{}, nil
 }
 
 // Disable removes the Exim overlay (mail returns to direct delivery). The credential is

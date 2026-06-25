@@ -147,11 +147,16 @@ func (u *upstream) Deliverability(ctx context.Context) (json.RawMessage, error) 
 
 // postJSON performs an authenticated POST with a JSON body and decodes the response.
 func (u *upstream) postJSON(ctx context.Context, path string, body, out any) error {
+	return u.sendJSON(ctx, http.MethodPost, path, body, out)
+}
+
+// sendJSON performs an authenticated request with a JSON body and decodes the response.
+func (u *upstream) sendJSON(ctx context.Context, method, path string, body, out any) error {
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.base+path, bytes.NewReader(buf))
+	req, err := http.NewRequestWithContext(ctx, method, u.base+path, bytes.NewReader(buf))
 	if err != nil {
 		return err
 	}
@@ -238,4 +243,10 @@ func (u *upstream) CreateSMTPUser(ctx context.Context, username, password, domai
 		"domain":   domain,
 	}, &out)
 	return out, err
+}
+
+// ResetSMTPUserPassword sets a new password on an existing SMTP user (admin scope).
+func (u *upstream) ResetSMTPUserPassword(ctx context.Context, id, password string) error {
+	return u.sendJSON(ctx, http.MethodPatch, "/v1/smtp-users/"+url.PathEscape(id),
+		map[string]string{"password": password}, nil)
 }
