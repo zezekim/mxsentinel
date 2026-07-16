@@ -56,6 +56,19 @@ func TestInsertRemoveRoundTrip(t *testing.T) {
 		t.Fatal("authenticator missing client_send credential")
 	}
 
+	// Transport must sign DKIM before relaying — otherwise mail leaves cPanel unsigned and
+	// never gets dkim=pass. Guard the exact lines the signing depends on.
+	for _, want := range []string{
+		"dkim_domain = ${sender_address_domain}",
+		"dkim_selector = default",
+		"dkim_private_key = ${if exists{/var/cpanel/domain_keys/private/${sender_address_domain}}",
+		"dkim_canon = relaxed",
+	} {
+		if !strings.Contains(inserted, want) {
+			t.Fatalf("transport missing DKIM signing directive %q", want)
+		}
+	}
+
 	// Removing must restore the original bytes exactly.
 	if got := removeBlocks(inserted); got != fixtureLocal {
 		t.Fatalf("round trip not byte-identical:\n--- want ---\n%q\n--- got ---\n%q", fixtureLocal, got)

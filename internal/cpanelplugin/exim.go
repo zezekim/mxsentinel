@@ -61,10 +61,21 @@ func smarthostBlocks(host string, port int, username, password string) map[strin
   no_more
 `, host, port)
 
+	// DKIM must be signed here, before the message leaves the cPanel box: routing to this
+	// custom transport bypasses cPanel's stock remote_smtp transport (which is where cPanel
+	// applies its per-domain signing), so if we don't sign, relayed mail arrives unsigned and
+	// never gets dkim=pass. We sign with the domain's own cPanel key under selector `default`
+	// (/var/cpanel/domain_keys/private/<domain>), whose public record cPanel auto-publishes
+	// when the domain's DNS is local. The ${if exists ...}{0} guard makes signing a no-op for
+	// any domain that has no key rather than failing the transport.
 	transport := fmt.Sprintf(`mxsentinel_smtp:
   driver = smtp
   hosts_require_auth = %s
   hosts_require_tls = %s
+  dkim_domain = ${sender_address_domain}
+  dkim_selector = default
+  dkim_private_key = ${if exists{/var/cpanel/domain_keys/private/${sender_address_domain}}{/var/cpanel/domain_keys/private/${sender_address_domain}}{0}}
+  dkim_canon = relaxed
 `, host, host)
 
 	// client_send carries the SASL credential inline (as cPanel smarthost guides do).
