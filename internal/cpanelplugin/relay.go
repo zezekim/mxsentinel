@@ -292,10 +292,12 @@ func (m *relayManager) DNSRecords(ctx context.Context) ([]DNSRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	selector := s.DKIMSelector
-	if selector == "" {
-		selector = "mxs"
-	}
+	// Relayed mail is DKIM-signed at the cPanel box (see smarthostBlocks in exim.go) using
+	// each domain's own cPanel key under selector `default`, not the relay's `mxs` key. So the
+	// record operators must have live is `default._domainkey.<domain>` — which cPanel manages
+	// automatically when the domain's DNS is local. s.DKIMSelector (the relay-signing selector)
+	// is deliberately not used here.
+	const selector = "default"
 	policy := s.DMARCPolicy
 	if policy == "" {
 		policy = "none"
@@ -314,7 +316,7 @@ func (m *relayManager) DNSRecords(ctx context.Context) ([]DNSRecord, error) {
 		records = append(records, DNSRecord{
 			Domain: d,
 			SPF:    fmt.Sprintf("%s. TXT \"%s\"", d, spfVal),
-			DKIM:   fmt.Sprintf("%s._domainkey.%s. TXT (publish the public key from MX Sentinel Settings / the relay's /etc/opendkim/keys)", selector, d),
+			DKIM:   fmt.Sprintf("%s._domainkey.%s. TXT (signed at cPanel with the domain's own key; cPanel publishes this automatically when the domain's DNS is local — if DNS is external, copy the record from WHM » Email Deliverability)", selector, d),
 			DMARC:  fmt.Sprintf("_dmarc.%s. TXT \"%s\"", d, dmarc),
 		})
 	}
