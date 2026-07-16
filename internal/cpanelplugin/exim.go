@@ -64,17 +64,22 @@ func smarthostBlocks(host string, port int, username, password string) map[strin
 	// DKIM must be signed here, before the message leaves the cPanel box: routing to this
 	// custom transport bypasses cPanel's stock remote_smtp transport (which is where cPanel
 	// applies its per-domain signing), so if we don't sign, relayed mail arrives unsigned and
-	// never gets dkim=pass. We sign with the domain's own cPanel key under selector `default`
-	// (/var/cpanel/domain_keys/private/<domain>), whose public record cPanel auto-publishes
-	// when the domain's DNS is local. The ${if exists ...}{0} guard makes signing a no-op for
-	// any domain that has no key rather than failing the transport.
+	// never gets dkim=pass.
+	//
+	// We deliberately mirror cPanel's own signing idiom (see remote_smtp in /etc/exim.conf):
+	// dkim_domain resolves via ${perl{get_dkim_domain}}, NOT ${sender_address_domain}. Since
+	// Exim 4.94, envelope-derived values like $sender_address_domain are "tainted" and Exim
+	// refuses to build a filename from them ("Tainted filename … Permission denied" in
+	// exim_paniclog), so the key never opens and signing is silently skipped. cPanel's Perl
+	// helper returns an untainted domain, and $dkim_domain (the resolved option value) is then
+	// safe to interpolate into the key path. An empty return makes signing a no-op.
 	transport := fmt.Sprintf(`mxsentinel_smtp:
   driver = smtp
   hosts_require_auth = %s
   hosts_require_tls = %s
-  dkim_domain = ${sender_address_domain}
+  dkim_domain = ${perl{get_dkim_domain}}
   dkim_selector = default
-  dkim_private_key = ${if exists{/var/cpanel/domain_keys/private/${sender_address_domain}}{/var/cpanel/domain_keys/private/${sender_address_domain}}{0}}
+  dkim_private_key = "/var/cpanel/domain_keys/private/${dkim_domain}"
   dkim_canon = relaxed
 `, host, host)
 

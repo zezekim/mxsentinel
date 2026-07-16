@@ -58,10 +58,12 @@ func TestInsertRemoveRoundTrip(t *testing.T) {
 
 	// Transport must sign DKIM before relaying — otherwise mail leaves cPanel unsigned and
 	// never gets dkim=pass. Guard the exact lines the signing depends on.
+	// Must use cPanel's untainted Perl helper for the domain — interpolating the tainted
+	// $sender_address_domain into the key path makes Exim refuse to open it, so no signing.
 	for _, want := range []string{
-		"dkim_domain = ${sender_address_domain}",
+		"dkim_domain = ${perl{get_dkim_domain}}",
 		"dkim_selector = default",
-		"dkim_private_key = ${if exists{/var/cpanel/domain_keys/private/${sender_address_domain}}",
+		`dkim_private_key = "/var/cpanel/domain_keys/private/${dkim_domain}"`,
 		"dkim_canon = relaxed",
 	} {
 		if !strings.Contains(inserted, want) {
