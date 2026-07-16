@@ -11,14 +11,14 @@ import (
 // ---- response shapes -------------------------------------------------------
 
 type alertRuleJSON struct {
-	ID         string              `json:"id"`
-	Name       string              `json:"name"`
-	Signal     string              `json:"signal"`
-	Condition  json.RawMessage     `json:"condition"`
-	ChannelIDs []string            `json:"channel_ids"`
-	Enabled    bool                `json:"enabled"`
-	CreatedAt  string              `json:"created_at"`
-	UpdatedAt  string              `json:"updated_at"`
+	ID         string          `json:"id"`
+	Name       string          `json:"name"`
+	Signal     string          `json:"signal"`
+	Condition  json.RawMessage `json:"condition"`
+	ChannelIDs []string        `json:"channel_ids"`
+	Enabled    bool            `json:"enabled"`
+	CreatedAt  string          `json:"created_at"`
+	UpdatedAt  string          `json:"updated_at"`
 }
 
 type notificationChannelJSON struct {

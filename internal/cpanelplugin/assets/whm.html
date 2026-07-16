@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MX Sentinel — Relay</title>
+<style>
+  :root{--bg:#0f1419;--panel:#171d26;--panel2:#1d2530;--line:#2a3340;--fg:#e6edf3;
+    --muted:#8b98a9;--accent:#4c8dff;--ok:#3fb950;--warn:#d29922;--err:#f85149;}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  header{display:flex;align-items:center;gap:12px;padding:16px 22px;border-bottom:1px solid var(--line);background:var(--panel);}
+  header h1{font-size:16px;margin:0;font-weight:600;}
+  .logo{width:26px;height:26px;border-radius:6px;background:linear-gradient(135deg,#4c8dff,#7b5cff);
+    display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;font-size:13px;}
+  .spacer{flex:1;}
+  .pill{font-size:12px;padding:4px 11px;border-radius:999px;border:1px solid var(--line);color:var(--muted);background:var(--panel2);font-weight:600;}
+  .pill.on{color:#fff;background:#3fb95033;border-color:var(--ok);}
+  .pill.off{color:#fff;background:#8b98a933;border-color:var(--muted);}
+  main{padding:22px;max-width:900px;margin:0 auto;}
+  .banner{padding:12px 16px;border-radius:8px;margin-bottom:18px;font-size:13px;}
+  .banner.err{background:#f8514922;border:1px solid var(--err);color:#ffb4ad;}
+  .banner.ok{background:#3fb95022;border:1px solid var(--ok);color:#9be9a8;}
+  .banner.info{background:#58a6ff1a;border:1px solid #285a9b;color:#a9d1ff;}
+  section{margin-bottom:22px;}
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:0 0 10px;font-weight:600;}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px;}
+  .kv{display:grid;grid-template-columns:160px 1fr;gap:8px 14px;font-size:13.5px;}
+  .kv dt{color:var(--muted);}
+  .kv dd{margin:0;word-break:break-all;}
+  button{font:inherit;font-weight:600;border-radius:8px;border:1px solid var(--line);padding:10px 16px;cursor:pointer;color:var(--fg);background:var(--panel2);}
+  button:hover{border-color:var(--accent);}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;}
+  button.danger{background:#f8514922;border-color:var(--err);color:#ffb4ad;}
+  button:disabled{opacity:.5;cursor:not-allowed;}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
+  input[type=text]{font:inherit;background:#0d1117;border:1px solid var(--line);border-radius:8px;color:var(--fg);padding:9px 11px;min-width:240px;}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px;}
+  th,td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--line);vertical-align:top;}
+  th{color:var(--muted);font-weight:600;}
+  code{background:#0d1117;border:1px solid var(--line);border-radius:5px;padding:1px 5px;font-size:12px;word-break:break-all;}
+  .muted{color:var(--muted);}
+  footer{padding:16px 22px;color:var(--muted);font-size:12px;border-top:1px solid var(--line);}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">MX</div>
+  <h1>MX Sentinel — Outbound Relay</h1>
+  <span id="state" class="pill">…</span>
+  <div class="spacer"></div>
+  <span id="apibase" class="muted"></span>
+</header>
+<main>
+  <div id="banner"></div>
+
+  <section>
+    <h2>Status</h2>
+    <div class="card">
+      <dl class="kv">
+        <dt>Relay host</dt><dd id="relay">—</dd>
+        <dt>Credential</dt><dd id="cred">—</dd>
+        <dt>Routing</dt><dd id="routing">—</dd>
+      </dl>
+      <div class="row" style="margin-top:16px">
+        <button id="toggle" class="primary" disabled>…</button>
+        <span id="toggleNote" class="muted"></span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Test the path</h2>
+    <div class="card">
+      <p class="muted" style="margin-top:0">Authenticate to the relay with the provisioned credential. Optionally deliver a test message.</p>
+      <div class="row">
+        <input id="to" type="text" placeholder="optional: send test to you@example.com">
+        <button id="test">Run test</button>
+      </div>
+      <div id="testResult" style="margin-top:12px"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>DNS to publish</h2>
+    <div class="card">
+      <div class="row"><button id="loadDns">Show records for local domains</button></div>
+      <div id="dns"></div>
+    </div>
+  </section>
+</main>
+<footer>All outbound mail for non-local domains routes through the MX Sentinel relay (port 587, STARTTLS, AUTH). Disabling restores direct delivery.</footer>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+const here=window.location.pathname;
+function banner(kind,msg){$("banner").innerHTML=msg?`<div class="banner ${kind}">${esc(msg)}</div>`:"";}
+
+async function api(action,method,body){
+  const res=await fetch(`${here}?api=${action}`,{
+    method:method||"GET",cache:"no-store",
+    headers:body?{"Content-Type":"application/json"}:undefined,
+    body:body?JSON.stringify(body):undefined});
+  return res.json();
+}
+
+function render(st){
+  const on=!!st.enabled;
+  $("state").textContent=on?"Routing ON":"Routing OFF";
+  $("state").className="pill "+(on?"on":"off");
+  $("apibase").textContent=st.api_base||"";
+  $("relay").innerHTML=st.relay_host?`<code>${esc(st.relay_host)}:${esc(st.relay_port)}</code>`:'<span class="muted">not set in MX Sentinel Settings</span>';
+  $("cred").innerHTML=st.provisioned?`<code>${esc(st.username)}</code>`:'<span class="muted">not provisioned yet</span>';
+  $("routing").textContent=on?"Enabled — outbound mail egresses via the relay":"Disabled — direct delivery";
+
+  const btn=$("toggle");btn.disabled=false;
+  if(on){btn.textContent="Disable relay routing";btn.className="danger";$("toggleNote").textContent="";}
+  else{btn.textContent="Enable relay routing";btn.className="primary";}
+
+  // st.notice carries an API-reachability problem; show it first so a connectivity/token
+  // issue isn't misreported as "relay host not set".
+  if(st.error)banner("err",st.error);
+  else if(st.notice)banner("err",st.notice);
+  else if(!st.configured && !on)banner("info","Set a Relay Host in MX Sentinel → Settings before enabling.");
+  else banner("","");
+  if(!st.configured && !on){btn.disabled=true;$("toggleNote").textContent=st.notice?"Cannot reach MX Sentinel API — see above.":"Relay host required.";}
+}
+
+async function refresh(){
+  try{render(await api("status"));}
+  catch(e){banner("err","Could not load status from the plugin backend.");}
+}
+
+$("toggle").onclick=async()=>{
+  const enabling=$("state").textContent.includes("OFF");
+  const verb=enabling?"enable":"disable";
+  if(!confirm(`This will ${verb} relay routing for ALL outbound mail on this server and rebuild Exim. Continue?`))return;
+  $("toggle").disabled=true;$("toggle").textContent="Working… (rebuilding Exim)";
+  try{
+    const st=await api(verb,"POST");
+    render(st);
+    if(!st.error)banner("ok",enabling?"Relay routing enabled. Exim rebuilt.":"Relay routing disabled. Mail delivers directly again.");
+  }catch(e){banner("err","Action failed: "+e);refresh();}
+};
+
+$("test").onclick=async()=>{
+  $("testResult").innerHTML='<span class="muted">Testing…</span>';
+  try{
+    const r=await api("test","POST",{to:$("to").value.trim()});
+    $("testResult").innerHTML=`<div class="banner ${r.ok?"ok":"err"}">${esc(r.message)}</div>`;
+  }catch(e){$("testResult").innerHTML=`<div class="banner err">${esc(e)}</div>`;}
+};
+
+$("loadDns").onclick=async()=>{
+  $("dns").innerHTML='<span class="muted">Loading…</span>';
+  try{
+    const r=await api("dns");
+    if(r.error){$("dns").innerHTML=`<div class="banner err">${esc(r.error)}</div>`;return;}
+    const recs=r.records||[];
+    if(!recs.length){$("dns").innerHTML='<p class="muted">No local domains found on this server.</p>';return;}
+    $("dns").innerHTML=`<table><tr><th>Domain</th><th>Records</th></tr>`+recs.map(d=>
+      `<tr><td>${esc(d.domain)}</td><td><code>${esc(d.spf)}</code><br><code>${esc(d.dmarc)}</code><br><span class="muted">${esc(d.dkim)}</span></td></tr>`).join("")+`</table>`;
+  }catch(e){$("dns").innerHTML=`<div class="banner err">${esc(e)}</div>`;}
+};
+
+refresh();
+</script>
+</body>
+</html>

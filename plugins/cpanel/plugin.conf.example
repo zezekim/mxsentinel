@@ -1,0 +1,21 @@
+# MX Sentinel cPanel plugin configuration.
+# Installed to /etc/mxsentinel/plugin.conf  (must be root-owned, mode 0600).
+#
+# Read ONLY by root processes: the broker daemon (mxsentinel-plugin serve) and the WHM
+# admin CGI. It holds the API token, so it must never be readable by cPanel users.
+
+# Base URL of your MX Sentinel apid (no trailing slash).
+api_base = https://api.mxsentinel.example.com
+
+# A tenant API token (mxs_...) with ADMIN scope — the WHM relay installer provisions the
+# relay's SMTP submission user (POST /v1/smtp-users), which requires admin. Mint one with:
+#   mxctl apikey create --tenant <slug> --scopes admin --name cpanel-plugin
+token = mxs_xxxxxxxx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# Verify the apid TLS certificate. Set to false only for an internal CA / self-signed
+# endpoint you control.
+verify_ssl = true
+
+# Unix socket the broker listens on and the CGI connects to. The default matches the
+# systemd RuntimeDirectory. Change only if you also change the unit + wrappers.
+socket_path = /run/mxsentinel-plugin/api.sock
