@@ -1,8 +1,78 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { apiGet, type MessagesResponse, type Message } from "@/lib/api";
+import { apiGet, createShareLink, type MessagesResponse, type Message } from "@/lib/api";
 import LoadingError from "@/components/LoadingError";
+
+// ShareControl mints a public, capability-URL trace link for one message (by relay queue id)
+// so it can be sent to a client — "did my message deliver?" without exposing the dashboard.
+function ShareControl({ queueId }: { queueId: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  if (!queueId) {
+    return (
+      <span style={{ fontSize: "0.75rem", color: "#aaa" }}>
+        No queue id — this message can’t be shared.
+      </span>
+    );
+  }
+
+  async function mint() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const link = await createShareLink(queueId);
+      // link.url is absolute when the server has MXS_PUBLIC_BASE_URL, else a relative /trace path.
+      const full = link.url.startsWith("http")
+        ? link.url
+        : `${window.location.origin}${link.path}`;
+      setUrl(full);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function copy() {
+    if (!url) return;
+    navigator.clipboard?.writeText(url).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }
+
+  if (url) {
+    return (
+      <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+        <input
+          readOnly
+          value={url}
+          onFocus={(e) => e.target.select()}
+          style={{ flex: 1, minWidth: "260px", fontSize: "0.78rem", padding: "0.3rem 0.5rem" }}
+        />
+        <button type="button" onClick={copy} style={{ fontSize: "0.78rem" }}>
+          {copied ? "Copied!" : "Copy"}
+        </button>
+        <a href={url} target="_blank" rel="noreferrer" style={{ fontSize: "0.78rem" }}>
+          Open ↗
+        </a>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+      <button type="button" onClick={mint} disabled={busy} style={{ fontSize: "0.78rem" }}>
+        {busy ? "Creating…" : "Create share link"}
+      </button>
+      {err && <span style={{ fontSize: "0.75rem", color: "#c0392b" }}>{err}</span>}
+    </div>
+  );
+}
 
 const OUTCOMES = ["any", "delivered", "deferred", "bounced", "rejected", "received"];
 
@@ -22,6 +92,7 @@ function DetailRow({ m, cols }: { m: Message; cols: number }) {
     ["Time",             fmt(m.event_time)],
     ["Event ID",         m.event_id],
     ["Message-ID",       m.message_id],
+    ["Queue ID",         m.queue_id],
     ["Outcome",          m.outcome],
     ["Event type",       m.event_type],
     ["From domain",      m.from_domain],
@@ -61,6 +132,12 @@ function DetailRow({ m, cols }: { m: Message; cols: number }) {
               </div>
             ) : null
           )}
+        </div>
+        <div style={{ marginTop: "0.75rem", paddingTop: "0.75rem", borderTop: "1px solid #eee" }}>
+          <div style={{ fontSize: "0.72rem", color: "#888", marginBottom: "0.35rem" }}>
+            Share a client-facing status link for this message:
+          </div>
+          <ShareControl queueId={m.queue_id} />
         </div>
       </td>
     </tr>
