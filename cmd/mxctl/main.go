@@ -20,6 +20,7 @@ import (
 	"github.com/zezekim/mxsentinel/internal/config"
 	"github.com/zezekim/mxsentinel/internal/events"
 	"github.com/zezekim/mxsentinel/internal/obs"
+	chstore "github.com/zezekim/mxsentinel/internal/store/clickhouse"
 	pgstore "github.com/zezekim/mxsentinel/internal/store/postgres"
 	"github.com/zezekim/mxsentinel/migrations"
 	"github.com/zezekim/mxsentinel/pkg/contracts"
@@ -56,6 +57,7 @@ func newRootCmd() *cobra.Command {
 		busCmd(loadCfg),
 		seedCmd(loadCfg),
 		apikeyCmd(loadCfg),
+		messageCmd(loadCfg),
 		userCmd(loadCfg),
 		smtpUserCmd(loadCfg),
 		domainCmd(loadCfg),
@@ -641,6 +643,84 @@ func apikeyCmd(load func() (config.Config, error)) *cobra.Command {
 	create.Flags().StringVar(&scopes, "scopes", "read", "comma-separated scopes: read,write,admin")
 
 	c.AddCommand(create)
+	return c
+}
+
+func messageCmd(load func() (config.Config, error)) *cobra.Command {
+	c := &cobra.Command{Use: "message", Short: "Message tools (shareable delivery-trace links)"}
+
+	var tenantSlug, queueID, label string
+	var ttlHours int
+	share := &cobra.Command{
+		Use:   "share",
+		Short: "Mint a public delivery-trace link for one message (by relay queue id)",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if tenantSlug == "" || queueID == "" {
+				return fmt.Errorf("--tenant and --queue-id are required")
+			}
+			cfg, err := load()
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			pg, err := pgstore.New(ctx, cfg.Postgres)
+			if err != nil {
+				return err
+			}
+			defer pg.Close()
+
+			tenant, err := pg.GetTenantBySlug(ctx, tenantSlug)
+			if err != nil {
+				return err
+			}
+
+			// Verify the message exists for this tenant and grab its Message-ID from telemetry.
+			ch, err := chstore.New(ctx, cfg.ClickHouse)
+			if err != nil {
+				return fmt.Errorf("connect clickhouse: %w", err)
+			}
+			trace, err := ch.QueryMessageTrace(ctx, tenant.ID, queueID)
+			if err != nil {
+				return fmt.Errorf("look up message: %w", err)
+			}
+			if len(trace.Events) == 0 {
+				return fmt.Errorf("no message found for queue id %q in tenant %q", queueID, tenantSlug)
+			}
+
+			token, prefix, hash, err := api.GenerateShareToken()
+			if err != nil {
+				return err
+			}
+			var expiresAt *time.Time
+			if ttlHours > 0 {
+				t := time.Now().Add(time.Duration(ttlHours) * time.Hour)
+				expiresAt = &t
+			}
+			id, err := pg.CreateShareLink(ctx, tenant.ID, queueID, trace.MessageID, prefix, hash, label, "", expiresAt)
+			if err != nil {
+				return err
+			}
+
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "created share link %s for message %s (tenant %s)\n", id, queueID, tenantSlug)
+			base := strings.TrimRight(os.Getenv("MXS_PUBLIC_BASE_URL"), "/")
+			if base != "" {
+				fmt.Fprintf(out, "url (shown once):\n  %s/trace/%s\n", base, token)
+			} else {
+				fmt.Fprintf(out, "path (shown once — prefix with your dashboard origin):\n  /trace/%s\n", token)
+			}
+			if expiresAt != nil {
+				fmt.Fprintf(out, "expires: %s\n", expiresAt.UTC().Format(time.RFC3339))
+			}
+			return nil
+		},
+	}
+	share.Flags().StringVar(&tenantSlug, "tenant", "", "tenant slug (e.g. sentinel)")
+	share.Flags().StringVar(&queueID, "queue-id", "", "relay queue id of the message (e.g. 759CB8A8FD)")
+	share.Flags().StringVar(&label, "label", "", "optional label shown on the trace page")
+	share.Flags().IntVar(&ttlHours, "ttl-hours", 0, "optional link expiry in hours (0 = never)")
+
+	c.AddCommand(share)
 	return c
 }
 

@@ -99,6 +99,14 @@ func run(addr, corsOrigin string, rateLimit int) error {
 	}
 	apiSrv = apiSrv.WithEncryptor(enc)
 
+	// Public origin for shareable message-trace links (e.g. https://sentinel.squidix.net).
+	// When unset, the API returns relative /trace/<token> paths and the dashboard composes its
+	// own origin.
+	if base := os.Getenv("MXS_PUBLIC_BASE_URL"); base != "" {
+		apiSrv = apiSrv.WithPublicBaseURL(base)
+		log.Info("public trace links enabled", "base_url", base)
+	}
+
 	httpSrv := &http.Server{
 		Addr:              addr,
 		Handler:           apiSrv.Handler(),

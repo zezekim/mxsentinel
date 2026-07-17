@@ -29,6 +29,7 @@ type MessageRow struct {
 	EventType       string
 	Outcome         string
 	MessageID       string
+	QueueID         string
 	FromDomain      string
 	RecipientDomain string
 	Provider        string
@@ -51,7 +52,7 @@ func (s *Store) QueryMessages(ctx context.Context, f MessageFilter) ([]MessageRo
 	}
 
 	var sb strings.Builder
-	sb.WriteString(`SELECT toString(event_id), event_time, toString(event_type), message_id, from_domain, recipient_domain, provider, toString(relay_ip), smtp_code, enhanced_status, toString(bounce_class), response_text, sasl_username FROM smtp_events WHERE tenant_id = ?`)
+	sb.WriteString(`SELECT toString(event_id), event_time, toString(event_type), message_id, queue_id, from_domain, recipient_domain, provider, toString(relay_ip), smtp_code, enhanced_status, toString(bounce_class), response_text, sasl_username FROM smtp_events WHERE tenant_id = ?`)
 
 	args := []any{f.TenantID}
 
@@ -109,6 +110,7 @@ func (s *Store) QueryMessages(ctx context.Context, f MessageFilter) ([]MessageRo
 			&r.EventTime,
 			&r.EventType,
 			&r.MessageID,
+			&r.QueueID,
 			&r.FromDomain,
 			&r.RecipientDomain,
 			&r.Provider,
@@ -131,6 +133,74 @@ func (s *Store) QueryMessages(ctx context.Context, f MessageFilter) ([]MessageRo
 		return nil, fmt.Errorf("query messages: %w", err)
 	}
 	return results, nil
+}
+
+// TraceEvent is one lifecycle event in a single message's delivery trace.
+type TraceEvent struct {
+	EventTime       time.Time
+	EventType       string
+	Provider        string
+	MXHost          string
+	RecipientDomain string
+	SMTPCode        uint16
+	EnhancedStatus  string
+	BounceClass     string
+	ResponseText    string
+}
+
+// MessageTrace is the full timeline for one message, keyed on the relay-local queue id.
+type MessageTrace struct {
+	QueueID    string
+	MessageID  string
+	FromDomain string
+	Events     []TraceEvent // chronological (oldest first)
+}
+
+// QueryMessageTrace returns every recorded event for one message (tenant_id + queue_id),
+// oldest first, for the per-message tracking page. An empty Events slice means the message
+// is unknown for that tenant — callers use that as the ownership/existence check when minting
+// a share link. queue_id is the stable per-message handle: a message may carry no Message-ID
+// header when rejected early, but always has a relay queue id.
+func (s *Store) QueryMessageTrace(ctx context.Context, tenantID, queueID string) (MessageTrace, error) {
+	const q = `SELECT event_time, toString(event_type), provider, mx_host, recipient_domain,
+	                  smtp_code, enhanced_status, toString(bounce_class), response_text, message_id, from_domain
+	           FROM smtp_events
+	           WHERE tenant_id = ? AND queue_id = ?
+	           ORDER BY event_time ASC
+	           LIMIT 500`
+
+	rows, err := s.conn.Query(ctx, q, tenantID, queueID)
+	if err != nil {
+		return MessageTrace{}, fmt.Errorf("query message trace: %w", err)
+	}
+	defer rows.Close()
+
+	trace := MessageTrace{QueueID: queueID}
+	for rows.Next() {
+		var (
+			e          TraceEvent
+			messageID  string
+			fromDomain string
+		)
+		if err := rows.Scan(
+			&e.EventTime, &e.EventType, &e.Provider, &e.MXHost, &e.RecipientDomain,
+			&e.SMTPCode, &e.EnhancedStatus, &e.BounceClass, &e.ResponseText, &messageID, &fromDomain,
+		); err != nil {
+			return MessageTrace{}, fmt.Errorf("scan trace event: %w", err)
+		}
+		// Carry the first non-empty header/domain we see onto the trace summary.
+		if trace.MessageID == "" && messageID != "" {
+			trace.MessageID = messageID
+		}
+		if trace.FromDomain == "" && fromDomain != "" {
+			trace.FromDomain = fromDomain
+		}
+		trace.Events = append(trace.Events, e)
+	}
+	if err := rows.Err(); err != nil {
+		return MessageTrace{}, fmt.Errorf("query message trace: %w", err)
+	}
+	return trace, nil
 }
 
 // DMARCAlignment holds aggregate alignment counts for a domain.

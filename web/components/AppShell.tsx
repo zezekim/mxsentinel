@@ -4,8 +4,9 @@ import { usePathname } from "next/navigation";
 import NavLinks from "@/components/NavLinks";
 
 // Routes that render standalone, without the authenticated sidebar shell:
-// the login screen and the public per-tenant status pages.
-const BARE_ROUTES = ["/login", "/status"];
+// the login screen, the public per-tenant status pages, and the public
+// per-message trace (delivery tracking) pages.
+const BARE_ROUTES = ["/login", "/status", "/trace"];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();

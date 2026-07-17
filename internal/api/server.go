@@ -7,6 +7,7 @@ package api
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/zezekim/mxsentinel/internal/auth"
 	"github.com/zezekim/mxsentinel/internal/crypto"
@@ -25,6 +26,7 @@ type Server struct {
 	limiter    Limiter           // nil disables rate limiting
 	sessions   auth.SessionStore // nil disables user login
 	enc        *crypto.Encryptor // nil = passthrough (plaintext credentials)
+	publicBaseURL string         // e.g. https://sentinel.squidix.net; "" → return relative /trace paths
 }
 
 // New constructs the API server. corsOrigin is the Access-Control-Allow-Origin value
@@ -51,6 +53,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/domains/{id}/dns/snapshots", s.requireScope(ScopeRead, s.handleSnapshots))
 	mux.HandleFunc("POST /v1/domains/{id}/dns/recheck", s.requireScope(ScopeWrite, s.handleRecheck))
 	mux.HandleFunc("GET /v1/messages", s.requireScope(ScopeRead, s.handleMessages))
+	// Per-message shareable trace links (the message is keyed by relay queue id).
+	mux.HandleFunc("POST /v1/messages/{queueID}/share", s.requireScope(ScopeWrite, s.handleCreateShareLink))
+	mux.HandleFunc("GET /v1/messages/{queueID}/shares", s.requireScope(ScopeRead, s.handleListShareLinks))
+	mux.HandleFunc("DELETE /v1/messages/shares/{id}", s.requireScope(ScopeWrite, s.handleRevokeShareLink))
 	mux.HandleFunc("GET /v1/dmarc/reports", s.requireScope(ScopeRead, s.handleDMARCReports))
 	mux.HandleFunc("GET /v1/analytics/deliverability", s.requireScope(ScopeRead, s.handleDeliverability))
 	mux.HandleFunc("GET /v1/analytics/rejections", s.requireScope(ScopeRead, s.handleRejections))
@@ -129,6 +135,7 @@ func (s *Server) Handler() http.Handler {
 	root := http.NewServeMux()
 	root.HandleFunc("POST /v1/auth/login", s.handleLogin)
 	root.HandleFunc("GET /v1/status/{slug}", s.handlePublicStatus)
+	root.HandleFunc("GET /v1/trace/{token}", s.handlePublicTrace)
 	root.Handle("/", authed)
 
 	// recoverer → logger → cors (handles preflight) → (login | authed routes)
@@ -139,6 +146,14 @@ func (s *Server) Handler() http.Handler {
 // as plaintext (passthrough mode — acceptable for dev; production requires MXS_ENCRYPTION_KEY).
 func (s *Server) WithEncryptor(enc *crypto.Encryptor) *Server {
 	s.enc = enc
+	return s
+}
+
+// WithPublicBaseURL sets the public origin used to build shareable message-trace URLs
+// (e.g. https://sentinel.squidix.net). When empty, share responses return only the
+// relative "/trace/<token>" path and the caller composes its own origin.
+func (s *Server) WithPublicBaseURL(base string) *Server {
+	s.publicBaseURL = strings.TrimRight(base, "/")
 	return s
 }
 
