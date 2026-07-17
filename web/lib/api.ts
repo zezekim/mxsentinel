@@ -361,6 +361,22 @@ export interface DmarcReport {
   date_begin: string;
   date_end: string;
   record_count: number;
+  pass_count: number;
+  fail_count: number;
+}
+
+export interface DmarcRecord {
+  source_ip: string;
+  count: number;
+  disposition: string;
+  dkim_aligned: boolean;
+  spf_aligned: boolean;
+  header_from: string;
+  envelope_from: string;
+}
+
+export interface DmarcRecordsResponse {
+  records: DmarcRecord[];
 }
 
 export interface DmarcAlignment {
@@ -374,6 +390,27 @@ export interface DmarcAlignment {
 export interface DmarcReportsResponse {
   reports: DmarcReport[];
   alignment: DmarcAlignment;
+}
+
+export interface DmarcAnalyticsStats {
+  domains: number;
+  reports: number;
+  messages: number;
+  pass_messages: number;
+  fail_messages: number;
+  pass_rate: number;
+}
+
+export interface DmarcTopFailingDomain {
+  domain: string;
+  fails: number;
+  total: number;
+  fail_rate: number;
+}
+
+export interface DmarcAnalyticsResponse {
+  stats: DmarcAnalyticsStats;
+  top_failing_domains: DmarcTopFailingDomain[];
 }
 
 // ─── Incidents ────────────────────────────────────────────────────────────────

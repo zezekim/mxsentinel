@@ -175,7 +175,8 @@ func (w *worker) evaluateTenant(ctx context.Context, tenantID string) {
 // checkRule evaluates a single alert rule and returns (triggered, triggeredValue, threshold, error).
 func (w *worker) checkRule(ctx context.Context, tenantID string, rule pgstore.AlertRule, now time.Time) (bool, float64, float64, error) {
 	var cond struct {
-		Threshold float64 `json:"threshold"`
+		Threshold   float64 `json:"threshold"`
+		MinMessages int     `json:"min_messages"`
 	}
 	if len(rule.Condition) > 0 {
 		if err := json.Unmarshal(rule.Condition, &cond); err != nil {
@@ -192,6 +193,9 @@ func (w *worker) checkRule(ctx context.Context, tenantID string, rule pgstore.Al
 
 	case "bounce_rate":
 		return w.checkBounceRate(ctx, tenantID, cond.Threshold, now)
+
+	case "dmarc_pass_rate":
+		return w.checkDMARCPassRate(ctx, tenantID, cond.Threshold, cond.MinMessages, now)
 
 	default:
 		w.log.Warn("unknown signal, skipping", "signal", rule.Signal, "rule", rule.ID)
@@ -265,6 +269,45 @@ func (w *worker) checkBounceRate(ctx context.Context, tenantID string, threshold
 		return true, maxBounceRate, threshold, nil
 	}
 	return false, maxBounceRate, threshold, nil
+}
+
+// dmarcPassRateWindow is the lookback window for the dmarc_pass_rate signal. DMARC
+// aggregate reports arrive with a lag of up to ~24h, so a 24h window is used rather
+// than the 1h window of the real-time signals.
+const dmarcPassRateWindow = 24 * time.Hour
+
+// dmarcPassRateDefaultMinMessages is the volume floor applied when a rule's
+// condition omits min_messages, so sparse domains do not produce noisy alerts.
+const dmarcPassRateDefaultMinMessages = 50
+
+// checkDMARCPassRate computes the per-domain DMARC pass rate over the recent window
+// and triggers if any domain (with at least min_messages of volume) falls below the
+// configured threshold. The triggered value reported is the worst (lowest) qualifying
+// pass rate; this drives the single rule-level alert event the shared mechanism fires.
+func (w *worker) checkDMARCPassRate(ctx context.Context, tenantID string, threshold float64, minMessages int, now time.Time) (bool, float64, float64, error) {
+	if minMessages <= 0 {
+		minMessages = dmarcPassRateDefaultMinMessages
+	}
+	since := now.Add(-dmarcPassRateWindow)
+	rates, err := w.ch.DMARCDomainPassRates(ctx, tenantID, since, minMessages)
+	if err != nil {
+		return false, 0, 0, fmt.Errorf("dmarc domain pass rates: %w", err)
+	}
+
+	// rates are ordered worst-first; the first domain below threshold is the worst.
+	for _, d := range rates {
+		if d.PassRate < threshold {
+			w.log.Info("dmarc pass rate below threshold",
+				"tenant", tenantID,
+				"domain", d.Domain,
+				"pass_rate", d.PassRate,
+				"threshold", threshold,
+				"messages", d.Total,
+			)
+			return true, d.PassRate, threshold, nil
+		}
+	}
+	return false, 0, threshold, nil
 }
 
 // alertPayload is the JSON payload stored in the alert_event and sent to notification channels.
