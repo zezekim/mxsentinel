@@ -19,6 +19,10 @@ name: mxsentinel
 x-app-env: &app-env
   MXS_LOGLEVEL: "${MXS_LOGLEVEL:-info}"
   MXS_HTTPADDR: ":9090"
+  # Public origin for shareable message-trace links (GET /v1/trace/{token}). When empty, the
+  # API returns relative /trace paths and the dashboard composes its own origin; set it to make
+  # apid emit absolute URLs (also used by `mxctl message share`). e.g. https://sentinel.squidix.net
+  MXS_PUBLIC_BASE_URL: "${MXS_PUBLIC_BASE_URL:-}"
   MXS_POSTGRES_DSN: "postgres://${PG_USER:-mxsentinel}:${PG_PASSWORD:-mxsentinel}@postgres:5432/${PG_DB:-mxsentinel}?sslmode=disable"
   MXS_CLICKHOUSE_ADDR: "clickhouse:9000"
   MXS_CLICKHOUSE_DATABASE: "${CH_DB:-mxsentinel}"
