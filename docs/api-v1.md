@@ -160,6 +160,56 @@ user — for per-account history), `since`/`until` (RFC 3339), `limit` (default 
   "sasl_username": "mailer@send.example.com" } ],
   "count": 1 }
 ```
+Each message row now also carries `queue_id` — the relay-local queue id used to key shareable
+trace links (below).
+
+### Shareable message-trace links
+
+A "did my message deliver?" tracking page for a single message — like courier tracking, built
+from the SMTP telemetry. A link is a capability URL: the high-entropy token *is* the credential,
+so it can be handed to a client without a login. The message is identified by its relay
+`queue_id` (stable even when a message carries no `Message-ID`). Only the token's SHA-256 hash +
+a non-secret lookup prefix are stored; links support expiry and revocation.
+
+#### `POST /v1/messages/{queueID}/share` (write)
+Mint a link for a message the tenant owns (404 if no telemetry exists for that queue id).
+Body (optional): `{ "label": string, "ttl_hours": int }`. The `token` is returned **once**.
+```json
+{ "id": "uuid", "queue_id": "759CB8A8FD", "message_id": "<...>", "label": "",
+  "url": "https://sentinel.squidix.net/trace/mxt_ab12cd34_…", "path": "/trace/mxt_…",
+  "token": "mxt_ab12cd34_…", "active": true, "view_count": 0, "expires_at": null,
+  "created_at": "..." }
+```
+`url` is absolute when `apid` runs with `MXS_PUBLIC_BASE_URL` set; otherwise it equals `path`
+and the caller composes its own origin.
+
+#### `GET /v1/messages/{queueID}/shares` (read)
+List a message's links (metadata + status only — the plaintext token is never recoverable):
+`{ "shares": [ { "id", "label", "active", "view_count", "expires_at", "revoked_at",
+"last_viewed_at", "created_at" } ], "count": N }`.
+
+#### `DELETE /v1/messages/shares/{id}` (write)
+Revoke a link → `{ "revoked": true }`. Its URL then returns `410 Gone`.
+
+#### `GET /v1/trace/{token}` (public, no auth)
+Resolve a link to the message's delivery trace. Unknown/wrong tokens return a uniform `404`
+(no enumeration signal); revoked/expired return `410`. Exposes only receipt-level data — sending
+domain, recipient domain, provider, the status ladder, and each provider response. Internal
+identifiers (queue id, relay IP, SMTP username, tenant) are never included; message bodies and
+full recipient addresses are never stored, so they cannot leak here.
+```json
+{ "message_id": "<...>", "from_domain": "calcamino.com", "recipient_domain": "icloud.com",
+  "provider": "apple", "status": "rejected", "label": "",
+  "events": [
+    { "event_time": "...", "event_type": "received", "provider": "", "mx_host": "",
+      "recipient_domain": "icloud.com", "smtp_code": 0, "enhanced_status": "",
+      "bounce_class": "none", "response_text": "" },
+    { "event_time": "...", "event_type": "rejected", "provider": "apple",
+      "mx_host": "mx01.mail.icloud.com", "recipient_domain": "icloud.com", "smtp_code": 554,
+      "enhanced_status": "5.7.1", "bounce_class": "policy",
+      "response_text": "554 5.7.1 [HM08] Message rejected due to local policy." } ],
+  "checked_at": "..." }
+```
 
 ### `GET /v1/dmarc/reports?domain=&limit=50`
 Archived DMARC reports + aggregate alignment.

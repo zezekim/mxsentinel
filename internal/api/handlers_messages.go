@@ -13,6 +13,7 @@ type messageJSON struct {
 	EventType       string `json:"event_type"`
 	Outcome         string `json:"outcome"`
 	MessageID       string `json:"message_id"`
+	QueueID         string `json:"queue_id"`
 	FromDomain      string `json:"from_domain"`
 	RecipientDomain string `json:"recipient_domain"`
 	Provider        string `json:"provider"`
@@ -61,7 +62,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	for _, m := range rows {
 		msgs = append(msgs, messageJSON{
 			EventID: m.EventID, EventTime: m.EventTime.UTC().Format(time.RFC3339),
-			EventType: m.EventType, Outcome: m.Outcome, MessageID: m.MessageID,
+			EventType: m.EventType, Outcome: m.Outcome, MessageID: m.MessageID, QueueID: m.QueueID,
 			FromDomain: m.FromDomain, RecipientDomain: m.RecipientDomain,
 			Provider: m.Provider, RelayIP: m.RelayIP, SMTPCode: m.SMTPCode,
 			EnhancedStatus: m.EnhancedStatus, BounceClass: m.BounceClass, ResponseText: m.ResponseText,

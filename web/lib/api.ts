@@ -255,6 +255,7 @@ export interface Message {
   event_type: string;
   outcome: string;
   message_id: string;
+  queue_id: string;
   from_domain: string;
   recipient_domain: string;
   provider: string;
@@ -269,6 +270,87 @@ export interface Message {
 export interface MessagesResponse {
   messages: Message[];
   count: number;
+}
+
+// ─── Message share links / public trace ────────────────────────────────────────
+
+export interface ShareLink {
+  id: string;
+  queue_id: string;
+  message_id: string;
+  label: string;
+  url: string;
+  path: string;
+  token?: string; // present only in the create response, once
+  active: boolean;
+  view_count: number;
+  expires_at: string | null;
+  revoked_at: string | null;
+  last_viewed_at: string | null;
+  created_at: string;
+}
+
+export interface SharesResponse {
+  shares: ShareLink[];
+  count: number;
+}
+
+export function createShareLink(
+  queueId: string,
+  opts?: { label?: string; ttl_hours?: number },
+): Promise<ShareLink> {
+  return apiPost<ShareLink>(`/v1/messages/${encodeURIComponent(queueId)}/share`, opts ?? {});
+}
+
+export function listShareLinks(queueId: string): Promise<SharesResponse> {
+  return apiGet<SharesResponse>(`/v1/messages/${encodeURIComponent(queueId)}/shares`);
+}
+
+export function revokeShareLink(id: string): Promise<{ revoked: boolean }> {
+  return apiDelete<{ revoked: boolean }>(`/v1/messages/shares/${encodeURIComponent(id)}`);
+}
+
+export interface TraceEvent {
+  event_time: string;
+  event_type: string;
+  provider: string;
+  mx_host: string;
+  recipient_domain: string;
+  smtp_code: number;
+  enhanced_status: string;
+  bounce_class: string;
+  response_text: string;
+}
+
+export interface PublicTrace {
+  message_id: string;
+  from_domain: string;
+  recipient_domain: string;
+  provider: string;
+  status: string;
+  label: string;
+  events: TraceEvent[];
+  checked_at: string;
+}
+
+// getPublicTrace fetches a shared trace WITHOUT auth headers — the token in the URL is the
+// only credential. Deliberately does not go through apiGet (which would attach a bearer token
+// and redirect to /login on 401).
+export async function getPublicTrace(token: string): Promise<PublicTrace> {
+  const res = await fetch(`${API_BASE}/v1/trace/${encodeURIComponent(token)}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      if (body?.error?.message) msg = body.error.message;
+    } catch {
+      // ignore parse error
+    }
+    throw new Error(msg);
+  }
+  return res.json() as Promise<PublicTrace>;
 }
 
 export interface DmarcReport {
