@@ -74,6 +74,26 @@ func (s *Store) InsertDMARCReport(ctx context.Context, p DMARCReportPointer) (st
 	return id, nil
 }
 
+// CountDMARCReports returns how many DMARC reports are archived for the tenant.
+// since/until (when non-zero) bound the date_begin range.
+func (s *Store) CountDMARCReports(ctx context.Context, tenantID string, since, until time.Time) (int, error) {
+	args := []any{tenantID}
+	q := `SELECT count(*) FROM dmarc_reports WHERE tenant_id = $1`
+	if !since.IsZero() {
+		args = append(args, since)
+		q += fmt.Sprintf(" AND date_begin >= $%d", len(args))
+	}
+	if !until.IsZero() {
+		args = append(args, until)
+		q += fmt.Sprintf(" AND date_begin <= $%d", len(args))
+	}
+	var n int
+	if err := s.Pool.QueryRow(ctx, q, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count dmarc reports: %w", err)
+	}
+	return n, nil
+}
+
 // DMARCReportListItem is a row for the reports listing (joins the domain name).
 type DMARCReportListItem struct {
 	ID          string
@@ -85,9 +105,48 @@ type DMARCReportListItem struct {
 	RecordCount int
 }
 
+// GetDMARCReport fetches one of a tenant's reports by row id. The bool is false
+// (nil error) when no such report exists for the tenant.
+func (s *Store) GetDMARCReport(ctx context.Context, tenantID, id string) (DMARCReportListItem, bool, error) {
+	const q = `SELECT r.id, r.org_name, r.report_id, COALESCE(NULLIF(d.name,''), r.domain_name, ''),
+	                  r.date_begin, r.date_end, r.record_count
+	           FROM dmarc_reports r
+	           LEFT JOIN domains d ON d.id = r.domain_id
+	           WHERE r.tenant_id = $1 AND r.id = $2`
+	var it DMARCReportListItem
+	var begin, end *time.Time
+	err := s.Pool.QueryRow(ctx, q, tenantID, id).Scan(&it.ID, &it.OrgName, &it.ReportID, &it.Domain, &begin, &end, &it.RecordCount)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DMARCReportListItem{}, false, nil
+	}
+	if err != nil {
+		return DMARCReportListItem{}, false, fmt.Errorf("get dmarc report: %w", err)
+	}
+	if begin != nil {
+		it.DateBegin = *begin
+	}
+	if end != nil {
+		it.DateEnd = *end
+	}
+	return it, true, nil
+}
+
+// DMARCReportFilter narrows and orders the reports listing. Zero-value fields are
+// ignored. Order (asc|desc) applies to the date_begin sort done here; pass/fail/total
+// ordering is handled by the caller after ClickHouse enrichment.
+type DMARCReportFilter struct {
+	Domain string
+	Org    string // exact org_name match
+	Since  time.Time
+	Until  time.Time
+	Order  string // "asc" or "desc" (default desc)
+	Limit  int
+}
+
 // ListDMARCReports lists a tenant's archived DMARC reports newest-first, optionally
-// filtered by domain name.
-func (s *Store) ListDMARCReports(ctx context.Context, tenantID, domain string, limit int) ([]DMARCReportListItem, error) {
+// filtered by domain name, org name, and a date_begin range.
+func (s *Store) ListDMARCReports(ctx context.Context, tenantID string, f DMARCReportFilter) ([]DMARCReportListItem, error) {
+	limit := f.Limit
 	if limit <= 0 {
 		limit = 50
 	}
@@ -100,12 +159,28 @@ func (s *Store) ListDMARCReports(ctx context.Context, tenantID, domain string, l
 	      FROM dmarc_reports r
 	      LEFT JOIN domains d ON d.id = r.domain_id
 	      WHERE r.tenant_id = $1`
-	if domain != "" {
-		args = append(args, domain)
+	if f.Domain != "" {
+		args = append(args, f.Domain)
 		q += fmt.Sprintf(" AND d.name = $%d", len(args))
 	}
+	if f.Org != "" {
+		args = append(args, f.Org)
+		q += fmt.Sprintf(" AND r.org_name = $%d", len(args))
+	}
+	if !f.Since.IsZero() {
+		args = append(args, f.Since)
+		q += fmt.Sprintf(" AND r.date_begin >= $%d", len(args))
+	}
+	if !f.Until.IsZero() {
+		args = append(args, f.Until)
+		q += fmt.Sprintf(" AND r.date_begin <= $%d", len(args))
+	}
+	dir := "DESC"
+	if f.Order == "asc" {
+		dir = "ASC"
+	}
 	args = append(args, limit)
-	q += fmt.Sprintf(" ORDER BY r.date_begin DESC NULLS LAST LIMIT $%d", len(args))
+	q += fmt.Sprintf(" ORDER BY r.date_begin %s NULLS LAST LIMIT $%d", dir, len(args))
 
 	rows, err := s.Pool.Query(ctx, q, args...)
 	if err != nil {

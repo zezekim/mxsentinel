@@ -226,13 +226,13 @@ services:
       migrate: {condition: service_completed_successfully}
       minio: {condition: service_healthy}
 
-  # Pulls DMARC aggregate reports from an external receiver API on a schedule.
+  # Pulls DMARC aggregate reports from the DMARC viewer API on a schedule.
+  # The viewer (/opt/dmarc) joins this stack's Docker network as hostname `dmarc`,
+  # so MXS_DMARCP_BASEURL points at http://dmarc:8080/api/v1 — no public round-trip.
   # Requires MXS_DMARCP_BASEURL, MXS_DMARCP_APIKEY, MXS_DMARCP_TENANTID in deploy/.env.
-  # If the receiver is on a private host, set MXS_DMARCP_EXTRA_HOST="hostname:ip" in .env.
   dmarcpulld:
     <<: *app
     command: ["/usr/local/bin/dmarcpulld"]
-    extra_hosts: "${MXS_DMARCP_EXTRA_HOST:-[]}"
     depends_on:
       migrate: {condition: service_completed_successfully}
 

@@ -14,8 +14,39 @@
 		reverse_proxy apid:8080
 	}
 
+	# Roundcube webmail for the DMARC report mailbox. Served from the
+	# `dmarc-roundcube` container, which joins this same Docker network
+	# (see /opt/dmarcparser/compose.yaml).
+	# Redirect here so Apache's own slash-redirect (plain http://) is never hit.
+	redir /roundcube /roundcube/
+	handle /roundcube/* {
+		reverse_proxy dmarc-roundcube:80
+	}
+
+	# DMARC parser API, consumed by WHMCS on core.squidix.net. The /dmarc-api
+	# prefix is stripped, so /dmarc-api/api/v1/reports -> /api/v1/reports on the
+	# `dmarc-parser` container (joins this network via /opt/dmarcparser/compose.yaml).
+	# Auth is the parser's own PARSER_API_KEYS (Bearer / X-API-Key).
+	handle_path /dmarc-api/* {
+		reverse_proxy dmarc-parser:8080
+	}
+
 	# Next.js dashboard (everything else)
 	handle {
 		reverse_proxy dashboard:3000
 	}
+}
+
+# DNS & Email Authentication Checker. Served from the `dnschecker` container,
+# which joins this same Docker network (see /opt/dnschecker/docker-compose.yml).
+dnschecker.squidix.com {
+	encode gzip
+	reverse_proxy dnschecker:80
+}
+
+# DMARC report viewer. Served from the `dmarc` container, which joins this same
+# Docker network (see /opt/dmarc/docker-compose.yml).
+dmarc.squidix.com {
+	encode gzip
+	reverse_proxy dmarc:8080
 }
