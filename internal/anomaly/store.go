@@ -75,8 +75,8 @@ func (s *Store) InsertAnomaly(ctx context.Context, tenantID, domain string, obse
 	return nil
 }
 
-// AnomalyRow is a recent detection for the API.
-type AnomalyRow struct {
+// Row is a recent detection for the API.
+type Row struct {
 	SenderDomain      string
 	ObservedHourCount int64
 	Baseline          float64
@@ -85,7 +85,7 @@ type AnomalyRow struct {
 }
 
 // RecentAnomalies returns a tenant's most recent detections, newest first.
-func (s *Store) RecentAnomalies(ctx context.Context, tenantID string, limit int) ([]AnomalyRow, error) {
+func (s *Store) RecentAnomalies(ctx context.Context, tenantID string, limit int) ([]Row, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -101,9 +101,9 @@ func (s *Store) RecentAnomalies(ctx context.Context, tenantID string, limit int)
 	}
 	defer rows.Close()
 
-	var out []AnomalyRow
+	var out []Row
 	for rows.Next() {
-		var a AnomalyRow
+		var a Row
 		if err := rows.Scan(&a.SenderDomain, &a.ObservedHourCount, &a.Baseline, &a.Factor, &a.DetectedAt); err != nil {
 			return nil, fmt.Errorf("scan anomaly: %w", err)
 		}

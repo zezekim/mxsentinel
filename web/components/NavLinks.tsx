@@ -36,6 +36,9 @@ const navSections = [
       { href: "/senders", label: "Top Senders", icon: Icons.chartBar },
       { href: "/heatmap", label: "Heatmap", icon: Icons.grid },
       { href: "/velocity", label: "Velocity", icon: Icons.zap },
+      { href: "/health-score", label: "Health Score", icon: Icons.chartBar },
+      { href: "/suppression", label: "Bounces", icon: Icons.mail },
+      { href: "/inbox-placement", label: "Inbox Placement", icon: Icons.mail },
     ],
   },
   {
@@ -44,6 +47,8 @@ const navSections = [
       { href: "/", label: "Domains", icon: Icons.globe },
       { href: "/ip-health", label: "IP Health", icon: Icons.server },
       { href: "/reputation", label: "Reputation", icon: Icons.shield },
+      { href: "/smtp-probes", label: "SMTP Probes", icon: Icons.server },
+      { href: "/microsoft", label: "Microsoft", icon: Icons.globe },
     ],
   },
   {
@@ -52,6 +57,8 @@ const navSections = [
       { href: "/auth-security", label: "Auth Security", icon: Icons.lock },
       { href: "/smtp-users", label: "SMTP Users", icon: Icons.users },
       { href: "/dmarc", label: "DMARC", icon: Icons.fileCheck },
+      { href: "/tls-reporting", label: "TLS Reporting", icon: Icons.lock },
+      { href: "/bimi", label: "BIMI", icon: Icons.shield },
     ],
   },
   {
@@ -59,6 +66,7 @@ const navSections = [
     links: [
       { href: "/incidents", label: "Incidents", icon: Icons.bell },
       { href: "/alerts", label: "Alerts", icon: Icons.alertTriangle },
+      { href: "/alert-channels", label: "Alert Channels", icon: Icons.bell },
       { href: "/warmup", label: "Warm-up", icon: Icons.flame },
     ],
   },
@@ -66,6 +74,7 @@ const navSections = [
     label: "Reporting",
     links: [
       { href: "/reports", label: "Reports", icon: Icons.calendar },
+      { href: "/ask", label: "Ask Logs", icon: Icons.chartBar },
     ],
   },
   {

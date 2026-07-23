@@ -366,6 +366,49 @@ docker compose \
 The `migrate` service runs automatically on each `up`, applying any new migrations before
 the daemons start. Existing data in named volumes is preserved across rebuilds.
 
+### Automatic updates (recommended)
+
+Instead of updating by hand, the VPS can auto-update itself whenever you ship. The flow is
+**CI-gated and pull-based** — no inbound access to the box, and no secrets stored in GitHub:
+
+```
+push to main
+   │  GitHub Actions (.github/workflows/ci.yml): build · vet · test · dashboard typecheck
+   ▼  (only if green)
+fast-forward the `release` branch
+   │
+   ▼  VPS timer every 5 min (deploy/self-update.sh)
+git pull release → up -d --build (migrate auto-runs) → health-check apid → rollback if unhealthy
+```
+
+Because the VPS tracks `release` and CI only advances `release` after the checks pass, a
+broken commit can land on `main` but **never auto-deploys**. If a deploy that reaches the
+box fails its health check, `self-update.sh` automatically rolls back to the previous commit
+and rebuilds. The Postfix relay is independent of this stack, so mail flow is never affected.
+
+**Enable it** — the installer prompts for this; to (re)install manually:
+
+```bash
+sudo bash deploy/install.sh   # answer "y" at the automatic-updates prompt
+# or, if the units are already installed:
+sudo systemctl enable --now mxsentinel-update.timer
+```
+
+**Observe / operate:**
+
+```bash
+systemctl status mxsentinel-update.timer     # next run + last result
+journalctl -u mxsentinel-update -f           # live deploy/rollback logs
+systemctl start mxsentinel-update.service    # force an update check right now
+sudo systemctl disable --now mxsentinel-update.timer   # turn auto-update off
+```
+
+Overrides (branch, compose profiles, health thresholds, an optional Slack webhook for
+deploy notices) live in `/etc/mxsentinel/update.env` — see
+`deploy/systemd/mxsentinel-update.env.example`. On a box that also runs the relay, set
+`MXS_UPDATE_PROFILES=app relay`. The `release` branch is created by the first green CI run
+on `main`; until then the timer is a harmless no-op.
+
 ### Restarting a single service
 
 ```bash

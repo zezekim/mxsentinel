@@ -1,0 +1,15 @@
+[Unit]
+Description=Run the MX Sentinel auto-update check periodically
+Documentation=file:///deploy/self-update.sh
+
+[Timer]
+# First check shortly after boot, then every 5 minutes. Persistent catches up on a check
+# missed while the box was off. A small random delay avoids a thundering-herd on the clock.
+OnBootSec=3min
+OnUnitActiveSec=5min
+Persistent=true
+RandomizedDelaySec=30
+Unit=mxsentinel-update.service
+
+[Install]
+WantedBy=timers.target

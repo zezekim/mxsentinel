@@ -7,6 +7,7 @@
 #     sudo bash deploy/install.sh --wire-relay-sasl  # (re-)wire relay SASL on an existing box, then exit
 #     sudo bash deploy/install.sh --wire-relay-spam  # (re-)install rspamd + ClamAV outbound filtering, then exit
 #     sudo bash deploy/install.sh --wire-ip-rotation # rotate outbound across a list of sending IPs, then exit
+#     sudo bash deploy/install.sh --wire-relay-failover # wire fallback-smarthost failover (mail.baby) for Outlook throttling, then exit
 #     bash deploy/install.sh --restart               # restart the running stack, then exit
 #
 # It installs every dependency (Docker, optionally Ollama, optionally Postfix+OpenDKIM),
@@ -23,6 +24,7 @@ APP_ONLY=0
 WIRE_RELAY_SASL=0
 WIRE_RELAY_SPAM=0
 WIRE_IP_ROTATION=0
+WIRE_RELAY_FAILOVER=0
 RESTART_ONLY=0
 for arg in "$@"; do
 	case "$arg" in
@@ -30,8 +32,9 @@ for arg in "$@"; do
 		--wire-relay-sasl) WIRE_RELAY_SASL=1 ;;
 		--wire-relay-spam) WIRE_RELAY_SPAM=1 ;;
 		--wire-ip-rotation) WIRE_IP_ROTATION=1 ;;
+		--wire-relay-failover) WIRE_RELAY_FAILOVER=1 ;;
 		--restart) RESTART_ONLY=1 ;;
-		-h|--help) sed -n '2,19p' "$0"; exit 0 ;;
+		-h|--help) sed -n '2,20p' "$0"; exit 0 ;;
 		*) echo "unknown flag: $arg" >&2; exit 2 ;;
 	esac
 done
@@ -90,7 +93,7 @@ have openssl || die "openssl not found"
 # Skipped for the focused maintenance runs (--wire-relay-*/--restart): they don't deploy,
 # so they neither prompt for settings nor write deploy/.env.
 REUSE_ENV=0
-if [ "$WIRE_RELAY_SASL" -eq 0 ] && [ "$WIRE_RELAY_SPAM" -eq 0 ] && [ "$WIRE_IP_ROTATION" -eq 0 ] && [ "$RESTART_ONLY" -eq 0 ]; then
+if [ "$WIRE_RELAY_SASL" -eq 0 ] && [ "$WIRE_RELAY_SPAM" -eq 0 ] && [ "$WIRE_IP_ROTATION" -eq 0 ] && [ "$WIRE_RELAY_FAILOVER" -eq 0 ] && [ "$RESTART_ONLY" -eq 0 ]; then
 if [ -f "$ENV_FILE" ]; then
 	if yesno "$ENV_FILE exists. Reuse it and just (re)deploy?" y; then
 		REUSE_ENV=1
@@ -481,11 +484,102 @@ provision_ip_rotation() {
 	done
 	[ "$i" -ge 1 ] || die "no valid IPs given to --wire-ip-rotation"
 	# randmap picks a random transport per recipient lookup → random source IP per message.
-	postconf -e "transport_maps = randmap:{$rand_entries}"
+	# If the failover overlay map (--wire-relay-failover) exists, keep it as the FIRST
+	# transport_maps entry so a domain in failover still routes to the fallback smarthost
+	# (first-match wins) rather than being caught by the randmap. The failover hook also
+	# self-heals this prefix, but preserving it here avoids a reroute gap on rotation changes.
+	local fo_map="/etc/postfix/mxs_failover"
+	if [ -f "$fo_map" ]; then
+		postconf -e "transport_maps = hash:$fo_map, randmap:{$rand_entries}"
+	else
+		postconf -e "transport_maps = randmap:{$rand_entries}"
+	fi
 	systemctl reload postfix || systemctl restart postfix
 	info "Outbound IP rotation on: $i IP(s), random per message (transport_maps = randmap)."
 	info "Verify: send a few test messages, then 'grep postfix/smtp-ip /var/log/mail.log' — the IP varies."
 	info "Each IP needs PTR/rDNS set (FCrDNS). Rollback: postconf -X transport_maps && systemctl reload postfix"
+}
+
+provision_relay_failover() {
+	# Wire the outbound-failover mechanism: a fallback smarthost transport (e.g. mail.baby)
+	# that relayfailoverd can flip specific throttled-provider domains onto. This sets up the
+	# STATIC pieces (transport, SASL creds, overlay map, transport_maps entry, host hook cron);
+	# the daemon then toggles the overlay's CONTENTS at runtime. See docs/relay-failover.md.
+	#
+	# $1 = fallback smarthost host:port (blank -> placeholder, wire creds later)
+	# $2 = SASL username at the fallback (blank -> placeholder)
+	# $3 = SASL password at the fallback (blank -> placeholder)
+	local host="${1:-}" user="${2:-}" pass="${3:-}"
+	local map_file="/etc/postfix/mxs_failover"
+	local sasl_file="/etc/postfix/mxs_failover_sasl"
+	local hookenv="/etc/postfix/mxs_failover.env"
+
+	# 1) Fallback transport in master.cf: a dedicated relay smtp transport, so its syslog tag
+	#    (postfix/relay-mailbaby) is distinct in the maillog and telemetryd can tell failover
+	#    traffic apart from direct sends. The smarthost NEXTHOP is carried in the transport-map
+	#    value (relay-mailbaby:[host]:port) — brackets disable MX lookup so mail goes to the
+	#    fallback smarthost, not the recipient's real MX. That nexthop is written to $hookenv
+	#    (FALLBACK_TRANSPORT), which the host hook reads when it fills the overlay map.
+	postconf -M "relay-mailbaby/unix=relay-mailbaby unix - - n - - smtp"
+	postconf -P "relay-mailbaby/unix/syslog_name=postfix/relay-mailbaby"
+
+	local fallback_transport="relay-mailbaby:"
+	if [ -n "$host" ]; then
+		# Split host[:port]; default the port to 587 (submission). Brackets = no MX lookup.
+		local h="${host%%:*}" p="587"
+		case "$host" in *:*) p="${host##*:}";; esac
+		fallback_transport="relay-mailbaby:[$h]:$p"
+	fi
+	printf 'FALLBACK_TRANSPORT=%s\n' "$fallback_transport" > "$hookenv"
+	chmod 644 "$hookenv"
+
+	# 2) SASL creds for the fallback (placeholder until you have a mail.baby account).
+	if [ ! -f "$sasl_file" ]; then
+		if [ -n "$host" ] && [ -n "$user" ]; then
+			printf '[%s] %s:%s\n' "$host" "$user" "$pass" > "$sasl_file"
+			info "Wrote fallback SASL creds to $sasl_file"
+		else
+			printf '# [smarthost.example:587] username:password  <-- fill in your mail.baby creds, then: postmap %s && systemctl reload postfix\n' "$sasl_file" > "$sasl_file"
+			warn "No fallback creds given — wrote a PLACEHOLDER to $sasl_file. Failover will NOT deliver until you fill it in."
+		fi
+		chmod 600 "$sasl_file"
+		postmap "$sasl_file" 2>/dev/null || true
+	fi
+	postconf -e \
+		"smtp_sasl_auth_enable = yes" \
+		"smtp_sasl_password_maps = hash:$sasl_file" \
+		"smtp_sasl_security_options = noanonymous" \
+		"smtp_sasl_mechanism_filter = plain, login"
+
+	# 3) Overlay map (starts EMPTY = no domains in failover; the daemon fills it via the hook).
+	[ -f "$map_file" ] || : > "$map_file"
+	postmap "$map_file"
+
+	# 4) Put the overlay FIRST in transport_maps, preserving any existing (e.g. randmap) tail.
+	local cur; cur="$(postconf -h transport_maps 2>/dev/null || true)"
+	if ! printf '%s' "$cur" | grep -q "hash:$map_file"; then
+		if [ -n "$cur" ]; then postconf -e "transport_maps = hash:$map_file, $cur"
+		else postconf -e "transport_maps = hash:$map_file"; fi
+	fi
+
+	systemctl reload postfix || systemctl restart postfix
+
+	# 5) Install the host-side hook on cron (every 2 min) if we can find it in the repo.
+	local hook="$SCRIPT_DIR/hooks/relay-failover-hook.sh"
+	if [ -f "$hook" ]; then
+		chmod +x "$hook"
+		local cronline="*/2 * * * * $hook >> /var/log/mxs-failover-hook.log 2>&1"
+		if ! crontab -l 2>/dev/null | grep -qF "$hook"; then
+			( crontab -l 2>/dev/null; echo "$cronline" ) | crontab -
+			info "Installed failover hook on cron (every 2 min): $hook"
+		fi
+	else
+		warn "Failover hook not found at $hook — add it to cron manually (see docs/relay-failover.md)."
+	fi
+
+	info "Outbound failover wired: transport=relay-mailbaby, overlay=$map_file (currently EMPTY = no failover)."
+	info "Arm the daemon: set MXS_FAILOVER_ENABLED=true (+ RELAY_TENANT_ID for incidents) in deploy/.env and restart relayfailoverd."
+	info "Rollback: postconf -X smtp_sasl_auth_enable; remove hash:$map_file from transport_maps; crontab -e (remove the hook line)."
 }
 
 provision_firewall() {
@@ -547,6 +641,24 @@ if [ "$WIRE_IP_ROTATION" -eq 1 ]; then
 	exit 0
 fi
 
+# Focused maintenance path: wire the fallback-smarthost failover mechanism (e.g. mail.baby)
+# that relayfailoverd flips throttled-provider domains onto. Idempotent (re-run to update
+# creds). Prompts for the smarthost + SASL creds; leave them blank to install a placeholder
+# and fill creds in later. See docs/relay-failover.md.
+if [ "$WIRE_RELAY_FAILOVER" -eq 1 ]; then
+	[ "$(id -u)" -eq 0 ] || die "--wire-relay-failover needs root — run: sudo bash deploy/install.sh --wire-relay-failover"
+	have postconf || die "Postfix not found on this host — provision the relay first (full install, without --wire-relay-failover)"
+	ask FO_HOST "Fallback smarthost host[:port] (e.g. smtp.mailbaby.net:587; blank = placeholder, wire later)"
+	FO_USER=""; FO_PASS=""
+	if [ -n "${FO_HOST:-}" ]; then
+		ask FO_USER "Fallback SMTP username (blank = placeholder)"
+		[ -n "${FO_USER:-}" ] && ask FO_PASS "Fallback SMTP password"
+	fi
+	provision_relay_failover "${FO_HOST:-}" "${FO_USER:-}" "${FO_PASS:-}"
+	bold "Done ✓ — outbound failover wired"
+	exit 0
+fi
+
 # Focused maintenance path: restart the running stack (no provisioning, no rebuild), then
 # exit. Restarts the app profile, plus relay (telemetryd) when this box runs the relay.
 if [ "$RESTART_ONLY" -eq 1 ]; then
@@ -605,6 +717,52 @@ bold "Deploying MX Sentinel (building images — first run takes a few minutes)�
 
 mxctl() { "${COMPOSE[@]}" --profile app run --rm -T apid /usr/local/bin/mxctl "$@"; }
 
+# ---- automatic updates (pull-based, CI-gated) ------------------------------------------
+# Installs a systemd timer that runs deploy/self-update.sh, which tracks the `release`
+# branch (GitHub Actions only advances it after CI passes), rebuilds, health-checks apid,
+# and rolls back on failure. Pull-based: no inbound access, no secrets in GitHub.
+provision_auto_update() {
+	if ! git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+		warn "This deploy dir is not a git checkout — automatic updates need a 'git clone' of the repo. Skipping."
+		return 0
+	fi
+	if ! git -C "$REPO_ROOT" remote get-url origin >/dev/null 2>&1; then
+		warn "No 'origin' git remote found — automatic updates need one (git clone from GitHub). Skipping."
+		return 0
+	fi
+	if ! have systemctl; then
+		warn "systemd not available — skipping automatic-update timer. Run deploy/self-update.sh from cron instead."
+		return 0
+	fi
+
+	local profiles="app"
+	[ "${RELAY:-0}" -eq 1 ] && profiles="app relay"
+
+	chmod +x "$REPO_ROOT/deploy/self-update.sh" 2>/dev/null || true
+
+	# Per-host override env for the service unit.
+	mkdir -p /etc/mxsentinel
+	if [ ! -f /etc/mxsentinel/update.env ]; then
+		{
+			echo "MXS_UPDATE_BRANCH=release"
+			echo "MXS_UPDATE_PROFILES=$profiles"
+			echo "MXS_UPDATE_ENV_FILE=$ENV_FILE"
+		} > /etc/mxsentinel/update.env
+	fi
+
+	# Install the unit files with this host's paths substituted in.
+	sed -e "s#__SELF_UPDATE_SH__#$REPO_ROOT/deploy/self-update.sh#g" \
+	    -e "s#__UPDATE_ENV_FILE__#/etc/mxsentinel/update.env#g" \
+	    "$REPO_ROOT/deploy/systemd/mxsentinel-update.service" > /etc/systemd/system/mxsentinel-update.service
+	cp "$REPO_ROOT/deploy/systemd/mxsentinel-update.timer" /etc/systemd/system/mxsentinel-update.timer
+
+	systemctl daemon-reload >/dev/null 2>&1 || true
+	systemctl enable --now mxsentinel-update.timer >/dev/null 2>&1 || true
+	info "auto-update enabled — tracks the 'release' branch every 5 min (systemd: mxsentinel-update.timer)"
+	info "  the release branch is created/advanced by GitHub Actions CI on green pushes to main"
+	info "  disable: sudo systemctl disable --now mxsentinel-update.timer"
+}
+
 if [ "$REUSE_ENV" -eq 0 ]; then
 	bold "Bootstrapping tenant + owner (waiting for the database)…"
 	created=0
@@ -657,6 +815,13 @@ if ln -sf "$REPO_ROOT/deploy/mxctl" /usr/local/bin/mxctl 2>/dev/null; then
 	MXCTL_HINT="mxctl"
 else
 	MXCTL_HINT="$REPO_ROOT/deploy/mxctl"
+fi
+
+bold "Automatic updates"
+if yesno "Enable automatic updates (pull the CI-gated 'release' branch, rebuild, health-check, rollback)?" y; then
+	provision_auto_update
+else
+	info "Skipped. Enable later: sudo systemctl enable --now mxsentinel-update.timer (after 'bash deploy/install.sh' installs the unit), or run deploy/self-update.sh from cron."
 fi
 
 bold "Done ✓"

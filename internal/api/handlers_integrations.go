@@ -345,7 +345,11 @@ func (s *Server) handleTriggerCpanelSync(w http.ResponseWriter, r *http.Request)
 	}
 
 	syncer := cpanelpkg.NewSyncer(client, s.pg, s.log)
-	go syncer.Run(context.Background(), srv.ID)
+	go func() {
+		// Fire-and-forget background sync; Run logs its own errors, so just swallow the return
+		// here (the HTTP response has already been sent as 202 Accepted).
+		_ = syncer.Run(context.Background(), srv.ID)
+	}()
 
 	writeJSON(w, http.StatusAccepted, map[string]any{"queued": true, "server_id": id})
 }

@@ -1,0 +1,18 @@
+[Unit]
+# MX Sentinel auto-update: pulls the CI-gated `release` branch, rebuilds, health-checks
+# apid, and rolls back on failure. Installed by deploy/install.sh (which substitutes the
+# __PLACEHOLDER__ paths for this host). See deploy/self-update.sh and docs/deploy-vps.md.
+Description=MX Sentinel auto-update (CI-gated pull + rebuild + health-check + rollback)
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# Optional overrides: MXS_UPDATE_BRANCH, MXS_UPDATE_PROFILES, MXS_UPDATE_ALERT_WEBHOOK, …
+# The leading "-" makes the file optional (no failure if absent).
+EnvironmentFile=-__UPDATE_ENV_FILE__
+ExecStart=__SELF_UPDATE_SH__
+# Image builds can take several minutes; don't let systemd kill a legitimate build.
+TimeoutStartSec=1800
+Nice=10
