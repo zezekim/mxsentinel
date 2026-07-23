@@ -18,15 +18,15 @@ import (
 
 // Server holds the API dependencies.
 type Server struct {
-	pg         *pgstore.Store
-	ch         *chstore.Store
-	resolver   dnsx.Resolver
-	log        *slog.Logger
-	corsOrigin string
-	limiter    Limiter           // nil disables rate limiting
-	sessions   auth.SessionStore // nil disables user login
-	enc        *crypto.Encryptor // nil = passthrough (plaintext credentials)
-	publicBaseURL string         // e.g. https://sentinel.squidix.net; "" → return relative /trace paths
+	pg            *pgstore.Store
+	ch            *chstore.Store
+	resolver      dnsx.Resolver
+	log           *slog.Logger
+	corsOrigin    string
+	limiter       Limiter           // nil disables rate limiting
+	sessions      auth.SessionStore // nil disables user login
+	enc           *crypto.Encryptor // nil = passthrough (plaintext credentials)
+	publicBaseURL string            // e.g. https://sentinel.squidix.net; "" → return relative /trace paths
 }
 
 // New constructs the API server. corsOrigin is the Access-Control-Allow-Origin value
@@ -134,6 +134,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/integrations/whmcs/{id}/push", s.requireScope(ScopeAdmin, s.handleTriggerWhmcsPush))
 	mux.HandleFunc("GET /v1/integrations/whmcs/{id}/log", s.requireScope(ScopeRead, s.handleWhmcsPushLog))
 	mux.HandleFunc("GET /v1/integrations/metrics", s.requireScope(ScopeRead, s.handleIntegrationMetrics))
+
+	// Feature routes (each registrar lives in its own handlers_*.go file).
+	s.registerHealthScoreRoutes(mux)  // deliverability health score
+	s.registerTLSReportingRoutes(mux) // TLS-RPT + MTA-STS
+	s.registerBounceRoutes(mux)       // bounce classification + suppression
+	s.registerMicrosoftRoutes(mux)    // Microsoft SNDS + JMRP
+	s.registerSeedTestRoutes(mux)     // inbox-placement seed testing
+	s.registerSMTPProbeRoutes(mux)    // synthetic SMTP probing
+	s.registerNLQueryRoutes(mux)      // natural-language analytics
+	s.registerBIMIRoutes(mux)         // BIMI / VMC validation
+	s.registerAlertChannelRoutes(mux) // alert delivery channels
 
 	// The authed pipeline: auth → rate limit (per tenant) → audit (records mutations).
 	authed := chain(mux, s.requireAuth, s.rateLimit, s.auditWrites)

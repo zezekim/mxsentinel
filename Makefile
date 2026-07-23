@@ -125,6 +125,42 @@ run-dmarcpulld: ## Pull DMARC reports from dmarc.squidix.org into Postgres + Cli
 run-apid: ## Run the REST API server on :8080
 	go run ./cmd/apid
 
+.PHONY: run-scored
+run-scored: ## Run the deliverability health-score snapshotter (hourly per-domain scores)
+	go run ./cmd/scored
+
+.PHONY: run-tlsrptd
+run-tlsrptd: ## Run the TLS-RPT/MTA-STS monitor (policy checks + report drop-dir ingest)
+	go run ./cmd/tlsrptd
+
+.PHONY: run-bounced
+run-bounced: ## Run the bounce classifier + suppression-list builder
+	go run ./cmd/bounced
+
+.PHONY: run-sndsd
+run-sndsd: ## Run the Microsoft SNDS poller + JMRP complaint ingest
+	go run ./cmd/sndsd
+
+.PHONY: run-seedd
+run-seedd: ## Run the inbox-placement seed-test runner
+	go run ./cmd/seedd
+
+.PHONY: run-probed
+run-probed: ## Run the synthetic SMTP prober (relay endpoint + TLS cert health)
+	go run ./cmd/probed
+
+.PHONY: run-bimid
+run-bimid: ## Run the BIMI/VMC readiness monitor
+	go run ./cmd/bimid
+
+.PHONY: run-notifyd
+run-notifyd: ## Run the alert-channel dispatcher (Slack/webhook/PagerDuty/email fan-out)
+	go run ./cmd/notifyd
+
+.PHONY: run-relayfailoverd
+run-relayfailoverd: ## Run the outbound-failover breaker (reroute throttled Outlook mail to a fallback smarthost)
+	MXS_FAILOVER_ENABLED=true go run ./cmd/relayfailoverd
+
 .PHONY: apikey
 apikey: ## Create a read+write API token for the demo tenant (printed once)
 	go run ./cmd/mxctl apikey create --tenant demo --scopes read,write

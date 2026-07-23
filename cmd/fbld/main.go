@@ -194,13 +194,7 @@ func (d *daemon) processFile(ctx context.Context, dir, name string) {
 		return
 	}
 
-	if err := d.store.InsertComplaint(ctx, fbl.Complaint{
-		FeedbackType: pc.FeedbackType,
-		SenderDomain: pc.SenderDomain,
-		SASLUsername: pc.SASLUsername,
-		Provider:     pc.Provider,
-		MessageID:    pc.MessageID,
-	}); err != nil {
+	if err := d.store.InsertComplaint(ctx, fbl.Complaint(pc)); err != nil {
 		// Infrastructure error (DB) — leave the file in place to retry.
 		d.log.Error("record complaint failed; will retry", "file", name, "err", err)
 		return

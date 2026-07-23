@@ -21,8 +21,8 @@ type shareLinkJSON struct {
 	QueueID      string  `json:"queue_id"`
 	MessageID    string  `json:"message_id"`
 	Label        string  `json:"label"`
-	URL          string  `json:"url"`  // full shareable URL (public base + /trace/<token>)
-	Path         string  `json:"path"` // "/trace/<token>" — for clients that compose their own origin
+	URL          string  `json:"url"`             // full shareable URL (public base + /trace/<token>)
+	Path         string  `json:"path"`            // "/trace/<token>" — for clients that compose their own origin
 	Token        string  `json:"token,omitempty"` // returned ONCE, only at creation
 	Active       bool    `json:"active"`
 	ViewCount    int     `json:"view_count"`

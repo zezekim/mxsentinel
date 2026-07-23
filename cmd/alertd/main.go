@@ -389,7 +389,7 @@ func (w *worker) notify(ctx context.Context, ch pgstore.NotificationChannel, rul
 		w.sendSlack(ctx, ch.ID, webhookURL, rule, payload)
 
 	case "email":
-		to, _ := cfg["to"]
+		to := cfg["to"]
 		w.log.Info("would send email",
 			"channel", ch.ID,
 			"to", to,

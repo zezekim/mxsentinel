@@ -8,7 +8,7 @@ import (
 
 // DMARCReportCSVRow is the minimal set of report fields needed to build the
 // reports CSV export. Domain is resolved like the reports listing:
-// COALESCE(NULLIF(d.name,''), r.domain_name, '').
+// COALESCE(NULLIF(d.name,”), r.domain_name, ”).
 type DMARCReportCSVRow struct {
 	OrgName     string
 	ReportID    string

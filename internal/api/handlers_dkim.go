@@ -13,19 +13,19 @@ import (
 // ---- response shape --------------------------------------------------------
 
 type dkimPlanJSON struct {
-	ID          string  `json:"id"`
-	DomainID    string  `json:"domain_id"`
-	SelectorOld string  `json:"selector_old"`
-	SelectorNew string  `json:"selector_new"`
+	ID           string  `json:"id"`
+	DomainID     string  `json:"domain_id"`
+	SelectorOld  string  `json:"selector_old"`
+	SelectorNew  string  `json:"selector_new"`
 	PublicKeyNew string  `json:"public_key_new"`
-	KeyBits     int     `json:"key_bits"`
-	Stage       string  `json:"stage"`
-	DNSVerified bool    `json:"dns_verified"`
-	TestPassed  bool    `json:"test_passed"`
-	DNSRecord   string  `json:"dns_record"`
-	CreatedAt   string  `json:"created_at"`
-	ActivatedAt *string `json:"activated_at"`
-	RetiredAt   *string `json:"retired_at"`
+	KeyBits      int     `json:"key_bits"`
+	Stage        string  `json:"stage"`
+	DNSVerified  bool    `json:"dns_verified"`
+	TestPassed   bool    `json:"test_passed"`
+	DNSRecord    string  `json:"dns_record"`
+	CreatedAt    string  `json:"created_at"`
+	ActivatedAt  *string `json:"activated_at"`
+	RetiredAt    *string `json:"retired_at"`
 }
 
 func dkimPlanToJSON(p pgstore.DKIMRotationPlan) dkimPlanJSON {

@@ -137,8 +137,8 @@ func (d *Detector) Record(ctx context.Context, tenant, domain string, now time.T
 // threshold is max(baseline*Factor, MinAbsolute).
 func (d *Detector) threshold(baseline float64) float64 {
 	t := baseline * d.cfg.Factor
-	if min := float64(d.cfg.MinAbsolute); t < min {
-		t = min
+	if minAbs := float64(d.cfg.MinAbsolute); t < minAbs {
+		t = minAbs
 	}
 	return t
 }

@@ -210,7 +210,7 @@ func (d *Detector) Observe(o Observation) (detail *TripDetail, tenant, domain st
 
 // score computes the composite score over the current window and returns a TripDetail iff it
 // crosses the threshold. Returns nil otherwise. Caller holds d.mu.
-func (d *Detector) score(cw *credWindow, now time.Time) *TripDetail {
+func (d *Detector) score(cw *credWindow, _ time.Time) *TripDetail {
 	total := len(cw.samples)
 	if total == 0 {
 		return nil

@@ -134,7 +134,7 @@ func (c *Client) GetClientByDomain(ctx context.Context, domain string) (*ClientR
 	case float64:
 		clientID = int(v)
 	case string:
-		fmt.Sscanf(v, "%d", &clientID)
+		_, _ = fmt.Sscanf(v, "%d", &clientID)
 	}
 	if clientID == 0 {
 		return nil, nil

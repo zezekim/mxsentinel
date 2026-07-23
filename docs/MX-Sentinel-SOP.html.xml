@@ -1,0 +1,1106 @@
+<h1>Mail Captain — Operations Wiki &amp; SOP</h1>
+
+<p><strong>Version:</strong> 1.0 | <strong>Status:</strong> Current | <strong>Audience:</strong> Platform operators, sysadmins, support engineers</p>
+
+
+<h2>Table of Contents</h2>
+
+<ol>
+<li>[System Overview](#1-system-overview)</li>
+<li>[Architecture](#2-architecture)</li>
+<li>[Service Inventory](#3-service-inventory)</li>
+<li>[Initial Server Deployment](#4-initial-server-deployment)</li>
+<li>[Configuration Reference](#5-configuration-reference)</li>
+<li>[First-Time Bootstrap](#6-first-time-bootstrap)</li>
+<li>[Postfix Relay Setup](#7-postfix-relay-setup)</li>
+<li>[Connecting cPanel / WHM Servers](#8-connecting-cpanel--whm-servers)</li>
+<li>[Connecting Other Senders](#9-connecting-other-senders)</li>
+<li>[AI Diagnostics (Ollama)](#10-ai-diagnostics-ollama)</li>
+<li>[Day-to-Day Operations](#11-day-to-day-operations)</li>
+<li>[Dashboard User Guide](#12-dashboard-user-guide)</li>
+<li>[API Reference Summary](#13-api-reference-summary)</li>
+<li>[Backup &amp; Recovery](#14-backup--recovery)</li>
+<li>[Security Hardening](#15-security-hardening)</li>
+<li>[Troubleshooting](#16-troubleshooting)</li>
+<li>[Glossary](#17-glossary)</li>
+</ol>
+
+
+<h2>1. System Overview</h2>
+
+<p>Mail Captain is an <strong>AI-powered email infrastructure observability and deliverability intelligence platform</strong>. It sits alongside your outbound mail relay — it is never in the mail path — and collects, correlates, and explains everything that happens to your outbound mail.</p>
+
+<h3>What it does</h3>
+
+<table><tbody><tr><th><strong>Capability</strong></th><th><strong>Description</strong></th></tr>
+<tr><td><strong>SMTP telemetry</strong></td><td>Parses Postfix maillogs in real time into per-message delivery events (outcome, SMTP code, provider, relay IP, bounce reason).</td></tr>
+<tr><td><strong>DNS intelligence</strong></td><td>Continuously validates and snapshots SPF, DKIM, DMARC, MX, MTA-STS, TLS-RPT, BIMI for every monitored domain. Detects drift.</td></tr>
+<tr><td><strong>DMARC ingestion</strong></td><td>Ingests aggregate DMARC XML reports and shows per-source alignment.</td></tr>
+<tr><td><strong>Correlation</strong></td><td>Joins rejection spikes against DNS change events to produce root-cause hypotheses (<em>&quot;Outlook auth rejections began 60 seconds after the DKIM selector was removed&quot;</em>).</td></tr>
+<tr><td><strong>Reputation monitoring</strong></td><td>Checks relay IPs against DNSBLs. Auto-pulls a listed IP from the Postfix rotation. Ingests FBL complaints. Fetches Gmail Postmaster reputation.</td></tr>
+<tr><td><strong>Outbound abuse detection</strong></td><td>Auto-suspends SMTP submission credentials whose mail is being rejected as spam. Detects volume anomalies and credential compromise.</td></tr>
+<tr><td><strong>AI diagnostics</strong></td><td>Uses a local LLM to write human-readable root-cause summaries and remediation steps for each incident.</td></tr>
+<tr><td><strong>REST API + dashboard</strong></td><td>Full web UI and API for domains, messages, incidents, settings, SMTP users, and more.</td></tr>
+</tbody></table>
+
+<h3>What it is NOT</h3>
+
+<ul>
+<li>Mail Captain is <strong>not</strong> in the mail path. Removing or stopping it does not affect mail delivery.</li>
+<li>It is <strong>not</strong> an MTA. It observes Postfix; it does not replace it.</li>
+<li>It does <strong>not</strong> store message bodies or subject lines. Only headers, metadata, and SMTP transaction results are retained.</li>
+</ul>
+
+<h3>Core pipeline</h3>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">text</ac:parameter><ac:plain-text-body><![CDATA[
+Collect → Normalize → Correlate → Analyze → Explain → Remediate
+]]></ac:plain-text-body></ac:structured-macro>
+
+
+<h2>2. Architecture</h2>
+
+<h3>Network topology (production)</h3>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">text</ac:parameter><ac:plain-text-body><![CDATA[
+                         Internet
+                            │
+                     ┌──────▼──────┐
+                     │  Caddy :443 │  (Let's Encrypt TLS — automatic)
+                     │  Caddy :80  │  (redirects to 443, ACME challenge)
+                     └──────┬──────┘
+                            │
+              ┌─────────────┴──────────────┐
+              │    Same origin — no CORS   │
+              ▼                            ▼
+      /v1/* → apid:8080          /* → dashboard:3000
+      (REST API)                 (Next.js UI)
+
+  ────────────── Docker internal network ──────────────────
+
+  postgres   clickhouse   redis   nats   minio
+  (127.0.0.1 only — not internet-reachable)
+
+  dnsd  correld  incidentd  repd  aid  dmarcd
+  rbld  anomalyd  fbld  authwatchd  abused
+  (no public ports)
+
+  ─────────────────── Host (optional) ─────────────────────
+
+  Postfix + OpenDKIM + Rspamd + ClamAV + Dovecot
+  Ollama (LLM — port 11434)
+]]></ac:plain-text-body></ac:structured-macro>
+
+<h3>Storage roles</h3>
+
+<table><tbody><tr><th><strong>Store</strong></th><th><strong>What lives there</strong></th></tr>
+<tr><td><strong>PostgreSQL</strong></td><td>Tenants, users, domains, DNS snapshots, API credentials, SMTP submission users, incidents, settings, audit log</td></tr>
+<tr><td><strong>ClickHouse</strong></td><td>SMTP telemetry events (<code>smtp_events</code>), DMARC alignment records, analytics rollups</td></tr>
+<tr><td><strong>Redis</strong></td><td>Session tokens (24h TTL), rate-limit counters, caches</td></tr>
+<tr><td><strong>NATS JetStream</strong></td><td>Event bus — decouples producers from consumers. Streams: <code>SMTP</code>, <code>DNS</code>, <code>REPUTATION</code>, <code>AI</code></td></tr>
+<tr><td><strong>MinIO / S3</strong></td><td>Raw DMARC XML archives, compressed forensic reports</td></tr>
+</tbody></table>
+
+<h3>Event bus subjects</h3>
+
+<p>All inter-service communication goes through NATS. Subject format: <code>mxs.&lt;family&gt;.&lt;tenant_id&gt;.&lt;event&gt;</code></p>
+
+<table><tbody><tr><th><strong>Subject pattern</strong></th><th><strong>Published by</strong></th><th><strong>Consumed by</strong></th></tr>
+<tr><td><code>mxs.smtp.&lt;tenant&gt;.delivered/bounced/rejected/deferred/received</code></td><td><code>telemetryd</code></td><td><code>ingestd</code>, <code>correld</code>, <code>abused</code>, <code>anomalyd</code>, <code>authwatchd</code></td></tr>
+<tr><td><code>mxs.dns.&lt;tenant&gt;.changed</code> / <code>.validation_failed</code></td><td><code>dnsd</code></td><td><code>correld</code>, <code>incidentd</code></td></tr>
+<tr><td><code>mxs.reputation.&lt;tenant&gt;.blacklist_hit</code></td><td><code>repd</code>, <code>rbld</code></td><td><code>incidentd</code></td></tr>
+<tr><td><code>mxs.ai.&lt;tenant&gt;.rca</code></td><td><code>aid</code></td><td>API, dashboard</td></tr>
+</tbody></table>
+
+
+<h2>3. Service Inventory</h2>
+
+<table><tbody><tr><th><strong>Container</strong></th><th><strong>Binary</strong></th><th><strong>Role</strong></th></tr>
+<tr><td><code>apid</code></td><td><code>/usr/local/bin/apid</code></td><td>REST API server on <code>:8080</code>. All <code>/v1</code> endpoints.</td></tr>
+<tr><td><code>dnsd</code></td><td><code>/usr/local/bin/dnsd</code></td><td>Polls monitored domains every 5 min; validates SPF/DKIM/DMARC/MX; writes DNS snapshots; emits <code>dns.*</code> events.</td></tr>
+<tr><td><code>telemetryd</code></td><td><code>/usr/local/bin/telemetryd</code></td><td>Tails Postfix maillog; parses into <code>smtp.*</code> events; spools to disk if NATS is down. Requires <code>relay</code> profile.</td></tr>
+<tr><td><code>ingestd</code></td><td><code>/usr/local/bin/ingestd</code></td><td>Consumes <code>smtp.*</code> from NATS; batch-writes to ClickHouse <code>smtp_events</code>.</td></tr>
+<tr><td><code>correld</code></td><td><code>/usr/local/bin/correld</code></td><td>Watches SMTP telemetry for per-provider rejection spikes; correlates against recent DNS changes; produces root-cause hypothesis.</td></tr>
+<tr><td><code>incidentd</code></td><td><code>/usr/local/bin/incidentd</code></td><td>Turns <code>dns.<em></code> and <code>reputation.</em></code> events into queryable incidents in Postgres.</td></tr>
+<tr><td><code>repd</code></td><td><code>/usr/local/bin/repd</code></td><td>Checks sending IPs against public DNSBLs; emits <code>reputation.blacklist_hit</code>.</td></tr>
+<tr><td><code>rbld</code></td><td><code>/usr/local/bin/rbld</code></td><td>Monitors the relay&#x27;s own egress IPs against DNSBLs; on a listing, opens an incident and writes a healthy-IP file that a host cron hook uses to remove the bad IP from Postfix.</td></tr>
+<tr><td><code>abused</code></td><td><code>/usr/local/bin/abused</code></td><td>Watches per-SMTP-user telemetry; auto-suspends credentials whose recipients are rejecting as spam.</td></tr>
+<tr><td><code>anomalyd</code></td><td><code>/usr/local/bin/anomalyd</code></td><td>Learns per-domain hourly volume baselines; opens incidents on spikes.</td></tr>
+<tr><td><code>fbld</code></td><td><code>/usr/local/bin/fbld</code></td><td>Ingests ARF feedback-loop complaints from a drop directory; fetches Gmail Postmaster reputation.</td></tr>
+<tr><td><code>authwatchd</code></td><td><code>/usr/local/bin/authwatchd</code></td><td>Detects per-credential compromise signals (recipient blasting, bounce spikes); supports opt-in auto-lock.</td></tr>
+<tr><td><code>aid</code></td><td><code>/usr/local/bin/aid</code></td><td>Reads unanalyzed incidents; sends to local LLM; writes <code>ai_summary</code> and <code>ai_remediation</code> back to the incident.</td></tr>
+<tr><td><code>dmarcd</code></td><td><code>/usr/local/bin/dmarcd</code></td><td>Watches a drop directory for DMARC aggregate XML; archives to MinIO; parses and writes to Postgres + ClickHouse.</td></tr>
+<tr><td><code>dashboard</code></td><td>Node.js <code>server.js</code></td><td>Next.js standalone server on <code>:3000</code>.</td></tr>
+<tr><td><code>caddy</code></td><td>Caddy v2</td><td>TLS termination + reverse proxy. <code>/v1/<em></code> → <code>apid</code>; <code>/</em></code> → <code>dashboard</code>.</td></tr>
+<tr><td><code>mxctl</code></td><td><code>/usr/local/bin/mxctl</code></td><td>Operator CLI — not a long-running service. Used with <code>docker compose run --rm apid /usr/local/bin/mxctl …</code>.</td></tr>
+</tbody></table>
+
+
+<h2>4. Initial Server Deployment</h2>
+
+<h3>4.1 Prerequisites</h3>
+
+<table><tbody><tr><th><strong>Requirement</strong></th><th><strong>Notes</strong></th></tr>
+<tr><td>VPS</td><td>Ubuntu 22.04 LTS or Debian 12. 2+ vCPU, 4 GB+ RAM (8 GB recommended if running Ollama).</td></tr>
+<tr><td>Docker Engine + Compose v2</td><td>Run <code>docker compose version</code> to verify.</td></tr>
+<tr><td>Domain name</td><td>An A record pointing to the VPS public IP — e.g. <code>sentinel.example.com</code>. DNS must resolve before launch (Let&#x27;s Encrypt needs it).</td></tr>
+<tr><td>Open ports</td><td>22 (SSH), 80 (ACME HTTP challenge), 443 (HTTPS). Nothing else needs to be public.</td></tr>
+<tr><td><code>make</code> (optional)</td><td><code>apt install make</code> — shorthand for the longer <code>docker compose</code> commands.</td></tr>
+</tbody></table>
+
+<h3>4.2 Install Docker</h3>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker $USER
+newgrp docker
+docker compose version   # must show v2.x
+]]></ac:plain-text-body></ac:structured-macro>
+
+<h3>4.3 Clone the repository</h3>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+git clone https://github.com/zezekim/mxsentinel.git
+cd mxsentinel
+]]></ac:plain-text-body></ac:structured-macro>
+
+<h3>4.4 Create the secrets file</h3>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+cp deploy/.env.prod.example deploy/.env
+nano deploy/.env
+]]></ac:plain-text-body></ac:structured-macro>
+
+<p>Fill in every value. Use <code>openssl rand -hex 32</code> to generate strong passwords. <strong>Never commit <code>deploy/.env</code> to git.</strong></p>
+
+<table><tbody><tr><th><strong>Variable</strong></th><th><strong>What it&#x27;s for</strong></th><th><strong>Example</strong></th></tr>
+<tr><td><code>MXS_DOMAIN</code></td><td>Your public hostname — must match your DNS A record</td><td><code>sentinel.example.com</code></td></tr>
+<tr><td><code>MXS_ACME_EMAIL</code></td><td>Let&#x27;s Encrypt expiry notices</td><td><code>ops@example.com</code></td></tr>
+<tr><td><code>PG_PASSWORD</code></td><td>PostgreSQL password</td><td><code>openssl rand -hex 32</code></td></tr>
+<tr><td><code>MINIO_ROOT_PASSWORD</code></td><td>MinIO password</td><td><code>openssl rand -hex 32</code></td></tr>
+<tr><td><code>MXS_AI_ENDPOINT</code></td><td>Local LLM URL (optional)</td><td><code>http://host.docker.internal:11434/v1</code></td></tr>
+<tr><td><code>MXS_AI_MODEL</code></td><td>Model name</td><td><code>llama3.2:3b</code></td></tr>
+<tr><td><code>RELAY_NODE_IP</code></td><td>Relay egress IP (if relay is on this box)</td><td><code>203.0.113.1</code></td></tr>
+<tr><td><code>MXS_TELEMETRY_HASHKEY</code></td><td>Hex key for recipient address hashing</td><td><code>openssl rand -hex 32</code></td></tr>
+</tbody></table>
+
+<h3>4.5 Launch the stack</h3>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+docker compose \
+  -f deploy/docker-compose.yml \
+  -f deploy/docker-compose.prod.yml \
+  --profile app \
+  --env-file deploy/.env \
+  up -d --build
+]]></ac:plain-text-body></ac:structured-macro>
+
+<p><strong>What happens on first launch:</strong></p>
+
+<ol>
+<li>Docker builds all images (Go services → distroless static image; dashboard → Next.js standalone bundle with <code>NEXT_PUBLIC_API_BASE</code> baked in as <code>https://&lt;MXS_DOMAIN&gt;</code>).</li>
+<li>The <code>migrate</code> one-shot container applies all Postgres + ClickHouse migrations and exits with code 0.</li>
+<li>All application services wait for <code>migrate</code> to succeed before starting.</li>
+<li>Caddy obtains a Let&#x27;s Encrypt TLS certificate. This takes 30–60 seconds and requires DNS + ports 80/443 to be reachable.</li>
+</ol>
+
+<h3>4.6 Verify the stack</h3>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+# Check container states
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.prod.yml \
+  --profile app --env-file deploy/.env ps
+
+# migrate → Exited (0)  ✓
+# All others → Up / healthy  ✓
+
+# Confirm TLS cert was issued
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.prod.yml \
+  --profile app --env-file deploy/.env logs caddy | grep -i "certificate"
+]]></ac:plain-text-body></ac:structured-macro>
+
+<p>Then open <code>https://sentinel.example.com</code> in a browser — you should see the login page.</p>
+
+<h3>4.7 Firewall</h3>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+sudo ufw allow 22/tcp
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw --force enable
+sudo ufw status
+]]></ac:plain-text-body></ac:structured-macro>
+
+<p>Verify backing services are NOT public:</p>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+ss -tlnp | grep -E '5432|9000|6379|4222'
+# Every line must show 127.0.0.1:PORT — never 0.0.0.0:PORT
+]]></ac:plain-text-body></ac:structured-macro>
+
+
+<h2>5. Configuration Reference</h2>
+
+<p>All services share a single config struct. Values load in this precedence order (highest wins):</p>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">text</ac:parameter><ac:plain-text-body><![CDATA[
+MXS_* environment variables  >  YAML config file  >  built-in defaults
+]]></ac:plain-text-body></ac:structured-macro>
+
+<p>The default YAML is <code>deploy/config/mxsentinel.example.yaml</code>. In production, all values are set via <code>MXS_*</code> env vars in <code>deploy/.env</code>.</p>
+
+<h3>Full environment variable reference</h3>
+
+<table><tbody><tr><th><strong>Variable</strong></th><th><strong>Default</strong></th><th><strong>Description</strong></th></tr>
+<tr><td><code>MXS_POSTGRES_DSN</code></td><td><code>postgres://mxsentinel:mxsentinel@localhost:5432/mxsentinel?sslmode=disable</code></td><td>PostgreSQL connection string</td></tr>
+<tr><td><code>MXS_CLICKHOUSE_ADDR</code></td><td><code>localhost:9000</code></td><td>ClickHouse native protocol address</td></tr>
+<tr><td><code>MXS_CLICKHOUSE_DATABASE</code></td><td><code>mxsentinel</code></td><td>ClickHouse database name</td></tr>
+<tr><td><code>MXS_REDIS_ADDR</code></td><td><code>localhost:6379</code></td><td>Redis address</td></tr>
+<tr><td><code>MXS_NATS_URL</code></td><td><code>nats://localhost:4222</code></td><td>NATS server URL</td></tr>
+<tr><td><code>MXS_OBJECTSTORE_ENDPOINT</code></td><td><code>localhost:9001</code></td><td>MinIO/S3 endpoint</td></tr>
+<tr><td><code>MXS_OBJECTSTORE_BUCKET</code></td><td><code>mxsentinel</code></td><td>Object storage bucket</td></tr>
+<tr><td><code>MXS_OBJECTSTORE_ACCESSKEY</code></td><td><code>minioadmin</code></td><td>S3 access key</td></tr>
+<tr><td><code>MXS_OBJECTSTORE_SECRETKEY</code></td><td><code>minioadmin</code></td><td>S3 secret key</td></tr>
+<tr><td><code>MXS_AI_ENDPOINT</code></td><td><code>http://localhost:11434/v1</code></td><td>OpenAI-compatible LLM base URL</td></tr>
+<tr><td><code>MXS_AI_MODEL</code></td><td><code>llama3</code></td><td>Model name to request</td></tr>
+<tr><td><code>MXS_AI_APIKEY</code></td><td>_(empty)_</td><td>API key (optional; most local servers ignore it)</td></tr>
+<tr><td><code>MXS_LOGLEVEL</code></td><td><code>info</code></td><td>Log level: <code>debug</code>, <code>info</code>, <code>warn</code>, <code>error</code></td></tr>
+<tr><td><code>MXS_HTTPADDR</code></td><td><code>:9090</code></td><td>Health/metrics endpoint (internal — not the API)</td></tr>
+<tr><td><code>RELAY_NODE_IP</code></td><td>_(empty)_</td><td>Relay&#x27;s outbound IP (used by <code>rbld</code>, <code>repd</code>)</td></tr>
+<tr><td><code>RELAY_EGRESS_IPS</code></td><td>_(empty)_</td><td>Comma-separated list of all egress IPs</td></tr>
+<tr><td><code>MXS_TELEMETRY_HASHKEY</code></td><td>_(empty)_</td><td>Hex key for recipient address HMAC-SHA256 hashing</td></tr>
+</tbody></table>
+
+
+<h2>6. First-Time Bootstrap</h2>
+
+<h3>6.1 Create the first owner account</h3>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.prod.yml \
+  --profile app --env-file deploy/.env \
+  run --rm apid \
+  /usr/local/bin/mxctl user create \
+    --tenant demo \
+    --email admin@yourcompany.com \
+    --password 'StrongPassword123!' \
+    --role owner
+]]></ac:plain-text-body></ac:structured-macro>
+
+<p>Roles: <code>owner</code> / <code>admin</code> → full access; <code>operator</code> → read + write; <code>viewer</code> → read only.</p>
+
+<h3>6.2 Create an API token</h3>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.prod.yml \
+  --profile app --env-file deploy/.env \
+  run --rm apid \
+  /usr/local/bin/mxctl apikey create \
+    --tenant demo \
+    --scopes read,write
+]]></ac:plain-text-body></ac:structured-macro>
+
+<p>The token (<code>mxs_&lt;prefix&gt;_&lt;secret&gt;</code>) is printed <strong>once</strong>. Only a SHA-256 hash is stored. Copy it immediately.</p>
+
+<p><strong>Scope guidance:</strong></p>
+<ul>
+<li><code>read</code> — monitoring dashboards, read-only integrations</li>
+<li><code>read,write</code> — integrations that trigger rechecks or resolve incidents</li>
+<li><code>admin</code> — user management, domain deletion, settings changes</li>
+</ul>
+
+<h3>6.3 Add your domains</h3>
+
+<p><strong>Via dashboard:</strong> Log in → Domains → click <strong>+ Add Domain</strong> → enter the domain name → click <strong>Add</strong>.</p>
+
+<p><strong>Via CLI (bulk import from cPanel):</strong></p>
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+cat /etc/trueuserdomains | docker compose -f deploy/docker-compose.yml \
+  -f deploy/docker-compose.prod.yml --profile app --env-file deploy/.env \
+  run --rm -i apid \
+  /usr/local/bin/mxctl domain import --tenant demo
+]]></ac:plain-text-body></ac:structured-macro>
+
+<p><strong>Via CLI (single domain):</strong></p>
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+docker compose … run --rm apid \
+  /usr/local/bin/mxctl domain add --tenant demo --name example.com
+]]></ac:plain-text-body></ac:structured-macro>
+
+<p>Once a domain is registered, <code>dnsd</code> picks it up on the next poll cycle (default: every 5 minutes) and captures the first DNS snapshot.</p>
+
+<h3>6.4 Seed demo data (optional)</h3>
+
+<p>For a fresh install that needs sample data immediately:</p>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+docker compose … run --rm apid /usr/local/bin/mxctl seed
+]]></ac:plain-text-body></ac:structured-macro>
+
+<p>Creates the <code>demo</code> tenant, registers <code>example.com</code>, and publishes a sample set of SMTP events.</p>
+
+<h3>6.5 Reset a locked-out owner password</h3>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+docker compose … run --rm apid \
+  /usr/local/bin/mxctl user set-password \
+    --tenant demo \
+    --email admin@yourcompany.com \
+    --password 'NewStrongPassword!'
+]]></ac:plain-text-body></ac:structured-macro>
+
+
+<h2>7. Postfix Relay Setup</h2>
+
+<p>This section applies only if you are running Postfix on the same VPS. Skip if you are connecting an external relay.</p>
+
+<h3>7.1 What the installer configures</h3>
+
+<p>Running <code>bash deploy/install.sh</code> (or <code>make install</code> after installing <code>make</code>) sets up:</p>
+
+<ul>
+<li>Postfix as an outbound relay with IP pool rotation</li>
+<li>OpenDKIM for per-domain DKIM signing</li>
+<li>Rspamd for outbound spam scoring and per-user rate limiting</li>
+<li>ClamAV for malware rejection</li>
+<li>Dovecot with Postgres passdb for SASL authentication (no flat password files)</li>
+<li><code>telemetryd</code> in the <code>relay</code> Docker profile to parse Postfix maillogs in real time</li>
+</ul>
+
+<h3>7.2 Key Postfix settings applied</h3>
+
+<table><tbody><tr><th><strong>Setting</strong></th><th><strong>Value</strong></th><th><strong>Purpose</strong></th></tr>
+<tr><td><code>smtpd_sasl_type</code></td><td><code>dovecot</code></td><td>Delegate SASL auth to Dovecot</td></tr>
+<tr><td><code>smtpd_tls_auth_only</code></td><td><code>yes</code></td><td>Never offer AUTH before TLS</td></tr>
+<tr><td><code>smtpd_relay_restrictions</code></td><td><code>permit_sasl_authenticated, reject</code></td><td>Only authenticated clients can relay</td></tr>
+<tr><td><code>smtp_sender_dependent_routing</code></td><td>enables IP pool selection per sender domain</td><td></td></tr>
+</tbody></table>
+
+<h3>7.3 Enable the relay profile</h3>
+
+<p>After the installer runs, telemetryd needs the <code>relay</code> profile:</p>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+docker compose \
+  -f deploy/docker-compose.yml \
+  -f deploy/docker-compose.prod.yml \
+  --profile app --profile relay \
+  --env-file deploy/.env \
+  up -d
+]]></ac:plain-text-body></ac:structured-macro>
+
+<p>Set <code>RELAY_NODE_IP</code> and <code>MAILLOG_PATH</code> in <code>deploy/.env</code> before starting.</p>
+
+<h3>7.4 RBL rotation hook</h3>
+
+<p><code>rbld</code> writes a file of healthy IPs to <code>/var/lib/mxsentinel/healthy-ips</code> (inside the container, bind-mounted to the host). A host-side cron hook reads this file and rebuilds the Postfix <code>randmap</code> source, then runs <code>postfix reload</code>. This means a listed IP is automatically removed from rotation without halting all mail.</p>
+
+<p>The hook script is at <code>deploy/hooks/rbl-rotation-hook.sh</code>. Install it as a cron job:</p>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+# Example: run every 15 minutes
+*/15 * * * * /opt/mxsentinel/deploy/hooks/rbl-rotation-hook.sh >> /var/log/rbl-rotation.log 2>&1
+]]></ac:plain-text-body></ac:structured-macro>
+
+
+<h2>8. Connecting cPanel / WHM Servers</h2>
+
+<p>This is the most common integration scenario. One SMTP submission credential is created for the entire cPanel server; cPanel/Exim continues DKIM-signing each customer&#x27;s mail.</p>
+
+<h3>Step 1 — Create one SMTP submission user</h3>
+
+<p>In the dashboard: <strong>SMTP Users → Add user</strong></p>
+
+<ul>
+<li><strong>Username:</strong> a full address like <code>relay@relay.example.com</code> (globally unique SASL login)</li>
+<li><strong>Password:</strong> strong, at least 16 characters</li>
+<li><strong>Sending domain:</strong> your relay hostname (optional, for filtering)</li>
+</ul>
+
+<p>Or via CLI:</p>
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+docker compose … run --rm apid \
+  /usr/local/bin/mxctl smtp-user create \
+    --tenant demo \
+    --username relay@relay.example.com \
+    --password 'your-strong-password' \
+    --domain relay.example.com
+]]></ac:plain-text-body></ac:structured-macro>
+
+<h3>Step 2 — Configure Exim in WHM</h3>
+
+<p>WHM → <strong>Service Configuration → Exim Configuration Manager → Advanced Editor</strong></p>
+
+<p>Add the following blocks (replace <code>relay.example.com</code>, username, and password):</p>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">text</ac:parameter><ac:plain-text-body><![CDATA[
+# ROUTERS START
+send_via_mxsentinel:
+  driver = manualroute
+  domains = ! +local_domains
+  transport = mxsentinel_smtp
+  route_list = * relay.example.com::587
+  no_more
+
+# TRANSPORTS START
+mxsentinel_smtp:
+  driver = smtp
+  hosts_require_auth = relay.example.com
+  hosts_require_tls = relay.example.com
+
+# AUTHS START
+mxsentinel_login:
+  driver = plaintext
+  public_name = LOGIN
+  client_send = : relay@relay.example.com : YOUR_SMTP_PASSWORD
+]]></ac:plain-text-body></ac:structured-macro>
+
+<p>Save and restart Exim.</p>
+
+<h3>Step 3 — DKIM: no changes needed</h3>
+
+<p>cPanel already DKIM-signs each account&#x27;s mail and publishes the selector in the customer&#x27;s DNS. Mail Captain&#x27;s relay passes the signature through untouched.</p>
+
+<h3>Step 4 — Publish SPF + DMARC per sending domain</h3>
+
+<p>For each customer domain:</p>
+
+<p><strong>SPF</strong> — add the relay to the existing SPF record:</p>
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">text</ac:parameter><ac:plain-text-body><![CDATA[
+example.com.  TXT  "v=spf1 include:<your-spf-endpoint> ~all"
+]]></ac:plain-text-body></ac:structured-macro>
+<p>The SPF include endpoint is set in <strong>Settings</strong> in the dashboard.</p>
+
+<p><strong>DMARC</strong> — start at <code>p=none</code>, tighten once SPF/DKIM are confirmed passing:</p>
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">text</ac:parameter><ac:plain-text-body><![CDATA[
+_dmarc.example.com.  TXT  "v=DMARC1; p=none; rua=mailto:dmarc@example.com"
+]]></ac:plain-text-body></ac:structured-macro>
+
+<h3>Step 5 — Import domain list for monitoring</h3>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+ssh root@cpanel-server "cat /etc/trueuserdomains" | \
+  docker compose … run --rm -i apid \
+  /usr/local/bin/mxctl domain import --tenant demo
+]]></ac:plain-text-body></ac:structured-macro>
+
+<h3>Step 6 — Test and verify</h3>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+swaks --to test@gmail.com --from sender@customerdomain.com \
+  --server relay.example.com --port 587 --tls \
+  --auth LOGIN \
+  --auth-user relay@relay.example.com \
+  --auth-password 'YOUR_SMTP_PASSWORD'
+]]></ac:plain-text-body></ac:structured-macro>
+
+<p>Check:</p>
+<ul>
+<li>Dashboard → <strong>Message Explorer</strong> → find the test message → click to expand → confirm outcome <code>delivered</code></li>
+<li>Open the received email&#x27;s headers: <code>Authentication-Results</code> should show <code>spf=pass dkim=pass dmarc=pass</code></li>
+<li>Dashboard → <strong>Domains</strong> → no critical findings on the sending domain</li>
+</ul>
+
+
+<h2>9. Connecting Other Senders</h2>
+
+<h3>Standalone Postfix (as a client)</h3>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">ini</ac:parameter><ac:plain-text-body><![CDATA[
+# /etc/postfix/main.cf
+relayhost = [relay.example.com]:587
+smtp_sasl_auth_enable = yes
+smtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd
+smtp_sasl_security_options = noanonymous
+smtp_tls_security_level = encrypt
+]]></ac:plain-text-body></ac:structured-macro>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+# /etc/postfix/sasl_passwd
+[relay.example.com]:587    mailer@send.example.com:your-password
+
+sudo postmap /etc/postfix/sasl_passwd
+sudo chmod 600 /etc/postfix/sasl_passwd /etc/postfix/sasl_passwd.db
+sudo systemctl reload postfix
+]]></ac:plain-text-body></ac:structured-macro>
+
+<h3>Standalone Exim</h3>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">text</ac:parameter><ac:plain-text-body><![CDATA[
+# Router
+smarthost:
+  driver = manualroute
+  domains = ! +local_domains
+  transport = relay_smtp
+  route_list = * relay.example.com::587
+  no_more
+
+# Transport
+relay_smtp:
+  driver = smtp
+  hosts_require_auth = relay.example.com
+  hosts_require_tls  = relay.example.com
+
+# Authenticator
+relay_login:
+  driver = plaintext
+  public_name = LOGIN
+  client_send = : mailer@send.example.com : your-password
+]]></ac:plain-text-body></ac:structured-macro>
+
+<h3>Application SMTP (Nodemailer, PHPMailer, Python, etc.)</h3>
+
+<table><tbody><tr><th><strong>Setting</strong></th><th><strong>Value</strong></th></tr>
+<tr><td>Host</td><td><code>relay.example.com</code></td></tr>
+<tr><td>Port</td><td><code>587</code></td></tr>
+<tr><td>Secure</td><td><code>false</code> (STARTTLS, not implicit TLS)</td></tr>
+<tr><td>requireTLS</td><td><code>true</code></td></tr>
+<tr><td>auth.user</td><td><code>mailer@send.example.com</code></td></tr>
+<tr><td>auth.pass</td><td>your password</td></tr>
+</tbody></table>
+
+<p><strong>Important:</strong> Always use port <code>587</code> (submission). Port <code>25</code> is for trusted network/loopback only and does not accept SASL authentication.</p>
+
+<h3>Production TLS certificate for the relay</h3>
+
+<p>The installer uses a self-signed certificate. For production, issue a real cert:</p>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+sudo certbot certonly --standalone -d relay.example.com \
+  --pre-hook "systemctl stop postfix" \
+  --post-hook "systemctl start postfix"
+
+sudo postconf -e \
+  "smtpd_tls_cert_file = /etc/letsencrypt/live/relay.example.com/fullchain.pem" \
+  "smtpd_tls_key_file  = /etc/letsencrypt/live/relay.example.com/privkey.pem"
+
+sudo postconf -P "submission/inet/smtpd_tls_security_level=encrypt"
+sudo systemctl reload postfix
+]]></ac:plain-text-body></ac:structured-macro>
+
+
+<h2>10. AI Diagnostics (Ollama)</h2>
+
+<p>The <code>aid</code> daemon reads open incidents and calls a local OpenAI-compatible LLM to produce:</p>
+<ul>
+<li><code>ai_summary</code> — a human-readable root-cause narrative</li>
+<li><code>ai_remediation</code> — a prioritized list of specific remediation steps</li>
+</ul>
+
+<p><strong>Mail delivery never depends on this.</strong> If Ollama is not running, incidents are still recorded; they just won&#x27;t have AI-generated explanations.</p>
+
+<h3>Install Ollama and pull a model</h3>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+# Install Ollama (see https://ollama.com)
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Pull a model (3B is comfortable on 8GB RAM alongside other services)
+ollama pull llama3.2:3b
+# or for better reasoning on 16GB+:
+ollama pull llama3:8b
+
+ollama serve
+]]></ac:plain-text-body></ac:structured-macro>
+
+<h3>Connect aid to Ollama on Linux</h3>
+
+<p>On Linux, <code>host.docker.internal</code> is not automatically available. Use the Docker bridge IP:</p>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+# Find the bridge IP (usually 172.17.0.1)
+ip route show | grep docker0
+
+# Set in deploy/.env:
+MXS_AI_ENDPOINT=http://172.17.0.1:11434/v1
+MXS_AI_MODEL=llama3.2:3b
+]]></ac:plain-text-body></ac:structured-macro>
+
+<p>Then restart the <code>aid</code> container:</p>
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+docker compose … restart aid
+]]></ac:plain-text-body></ac:structured-macro>
+
+<p><code>aid</code> retries on a backoff loop until the endpoint is reachable.</p>
+
+<h3>Verify AI is working</h3>
+
+<p>In the dashboard, open <strong>Incidents</strong>. Any open incident older than ~30 seconds should have the <code>ai_summary</code> field populated. If not, check aid logs:</p>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+docker compose … logs aid --tail 50
+]]></ac:plain-text-body></ac:structured-macro>
+
+
+<h2>11. Day-to-Day Operations</h2>
+
+<h3>Updating to a new version</h3>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+cd ~/mxsentinel
+git pull
+docker compose \
+  -f deploy/docker-compose.yml \
+  -f deploy/docker-compose.prod.yml \
+  --profile app --env-file deploy/.env \
+  up -d --build
+]]></ac:plain-text-body></ac:structured-macro>
+
+<p>Migrations run automatically. Data in named volumes is preserved.</p>
+
+<h3>Viewing logs</h3>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+# All services
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.prod.yml \
+  --profile app --env-file deploy/.env logs -f
+
+# Single service
+docker compose … logs -f apid
+docker compose … logs -f aid
+docker compose … logs -f dnsd
+]]></ac:plain-text-body></ac:structured-macro>
+
+<h3>Restarting a single service</h3>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+docker compose … restart apid
+docker compose … restart dnsd
+]]></ac:plain-text-body></ac:structured-macro>
+
+<h3>Stopping the entire stack</h3>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+docker compose … down
+# Add --volumes only to DESTROY all data (irreversible)
+]]></ac:plain-text-body></ac:structured-macro>
+
+<h3>Checking service health</h3>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+docker compose … ps
+# All services should show "Up" or "healthy"
+# migrate should show "Exited (0)"
+]]></ac:plain-text-body></ac:structured-macro>
+
+<h3>Manually triggering a DNS recheck</h3>
+
+<p>Via API:</p>
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+curl -X POST https://sentinel.example.com/v1/domains/<domain-id>/dns/recheck \
+  -H "Authorization: Bearer mxs_..."
+]]></ac:plain-text-body></ac:structured-macro>
+
+<p>Via dashboard: <strong>Domains → click domain → Recheck now</strong></p>
+
+<h3>Creating a new SMTP user</h3>
+
+<p>Dashboard: <strong>SMTP Users → Add user</strong></p>
+
+<p>CLI:</p>
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+docker compose … run --rm apid \
+  /usr/local/bin/mxctl smtp-user create \
+    --tenant demo \
+    --username mailer@send.example.com \
+    --password 'strong-password' \
+    --domain send.example.com
+]]></ac:plain-text-body></ac:structured-macro>
+
+<h3>Disabling a compromised SMTP user</h3>
+
+<p>Dashboard: <strong>SMTP Users → toggle the Enabled switch</strong> (takes effect on next auth attempt)</p>
+
+<p>CLI:</p>
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+# Disable
+curl -X PATCH https://sentinel.example.com/v1/smtp-users/<id> \
+  -H "Authorization: Bearer mxs_..." \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": false}'
+]]></ac:plain-text-body></ac:structured-macro>
+
+<p>Or via <strong>Auth Security</strong> page → lock the credential directly.</p>
+
+<h3>Resolving an incident</h3>
+
+<p>Dashboard: <strong>Incidents → Resolve</strong></p>
+
+<p>API:</p>
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+curl -X POST https://sentinel.example.com/v1/incidents/<id>/resolve \
+  -H "Authorization: Bearer mxs_..."
+]]></ac:plain-text-body></ac:structured-macro>
+
+<h3>Pausing DNS monitoring for a domain</h3>
+
+<p>Dashboard: <strong>Domains → click domain → Pause monitoring</strong></p>
+
+<p>API:</p>
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+curl -X PATCH https://sentinel.example.com/v1/domains/<id> \
+  -H "Authorization: Bearer mxs_..." \
+  -H "Content-Type: application/json" \
+  -d '{"status": "paused"}'
+]]></ac:plain-text-body></ac:structured-macro>
+
+
+<h2>12. Dashboard User Guide</h2>
+
+<h3>Login</h3>
+
+<p>Navigate to <code>https://sentinel.example.com/login</code>. Log in with your email and password. Sessions last 24 hours; you can log out explicitly via <strong>Account → Log out</strong>.</p>
+
+<h3>Domains</h3>
+
+<p>The home screen. Shows every monitored domain with its current health status for SPF, DKIM, DMARC, and MX.</p>
+
+<ul>
+<li><strong>Green (ok):</strong> no findings for this category</li>
+<li><strong>Yellow (warning):</strong> non-critical findings (e.g. SPF approaching the lookup limit)</li>
+<li><strong>Red (critical):</strong> action required (e.g. DKIM selector missing, SPF failing)</li>
+<li><strong>Grey (unknown):</strong> domain has not been checked yet</li>
+</ul>
+
+<p>Click a domain to open the detail view with full findings, the DNS drift timeline, and the Recheck / Pause / Delete controls.</p>
+
+<h3>Message Explorer</h3>
+
+<p>Search and browse every SMTP transaction. Filters: domain, sender, message-ID, provider, SMTP user, outcome, date range.</p>
+
+<p>Click any row to expand it and see the full details: complete response text, bounce class, enhanced status code, event ID, relay IP, and all other fields.</p>
+
+<p><strong>Outcome codes:</strong></p>
+<table><tbody><tr><th><strong>Outcome</strong></th><th><strong>Meaning</strong></th></tr>
+<tr><td><code>delivered</code></td><td><code>2xx</code> — accepted by the receiving server</td></tr>
+<tr><td><code>deferred</code></td><td><code>4xx</code> — temporary failure; Postfix will retry</td></tr>
+<tr><td><code>bounced</code></td><td>Permanent delivery failure (<code>5xx</code>) after acceptance</td></tr>
+<tr><td><code>rejected</code></td><td>Rejected at SMTP connection time</td></tr>
+<tr><td><code>received</code></td><td>Accepted into the relay queue (inbound to queue)</td></tr>
+</tbody></table>
+
+<h3>Incidents</h3>
+
+<p>Active intelligence-layer alerts. Each incident has a severity (<code>info</code>, <code>warning</code>, <code>critical</code>), a kind (<code>rejection_spike</code>, <code>blacklist</code>, <code>dns_validation</code>, <code>other</code>), and — once analyzed — an <code>ai_summary</code> and <code>ai_remediation</code>.</p>
+
+<p>Filter by status (<code>open</code> / <code>acknowledged</code> / <code>resolved</code>) or domain.</p>
+
+<h3>IP Health</h3>
+
+<p>Shows the relay&#x27;s own egress IPs checked against DNSBLs by <code>rbld</code>. A red row means the IP is currently listed — an incident is automatically opened and the IP is queued for removal from Postfix rotation.</p>
+
+<h3>Velocity</h3>
+
+<p>Volume anomaly detection. Shows sending domains whose hourly message count spiked beyond their learned baseline. <code>factor</code> is how many times above baseline (e.g. <code>10×</code>).</p>
+
+<h3>Reputation</h3>
+
+<p>Feedback-loop complaint counts and Gmail Postmaster reputation per sending domain. High complaint rates or a <code>BAD</code>/<code>LOW</code> Postmaster rating need immediate attention.</p>
+
+<h3>Auth Security</h3>
+
+<p>Per-credential compromise signals. Flags SMTP submission users showing behavioral indicators: recipient blasting, unusual bounce rates, sudden volume spikes. Admin users can lock a credential directly from this page.</p>
+
+<h3>SMTP Users</h3>
+
+<p>Create, enable/disable, reset passwords for, and delete SMTP submission credentials.</p>
+
+<h3>Settings</h3>
+
+<p>Tenant-level mail settings that drive DNS validation guidance and setup instructions:</p>
+
+<table><tbody><tr><th><strong>Setting</strong></th><th><strong>Purpose</strong></th></tr>
+<tr><td>SPF include endpoint</td><td>The <code>include:</code> mechanism your tenants add to their SPF records</td></tr>
+<tr><td>DKIM selector</td><td>The selector name OpenDKIM signs with (default: <code>mxs</code>)</td></tr>
+<tr><td>DMARC policy</td><td><code>none</code> / <code>quarantine</code> / <code>reject</code> — shown in setup docs</td></tr>
+<tr><td>DMARC RUA</td><td>Where aggregate reports are sent</td></tr>
+<tr><td>Relay host / port</td><td>Smarthost connection settings shown in setup docs</td></tr>
+<tr><td>DNS resolver</td><td>Which resolver <code>dnsd</code> and on-demand rechecks use</td></tr>
+</tbody></table>
+
+<h3>Account</h3>
+
+<p>Change your login password.</p>
+
+
+<h2>13. API Reference Summary</h2>
+
+<p>All endpoints are under <code>https://sentinel.example.com/v1/</code>. Authentication: <code>Authorization: Bearer &lt;token&gt;</code>.</p>
+
+<h3>Domain management</h3>
+
+<table><tbody><tr><th><strong>Method</strong></th><th><strong>Path</strong></th><th><strong>Scope</strong></th><th><strong>Description</strong></th></tr>
+<tr><td><code>GET</code></td><td><code>/v1/domains</code></td><td>read</td><td>List all domains with health summary</td></tr>
+<tr><td><code>POST</code></td><td><code>/v1/domains</code></td><td>write</td><td>Add a domain for monitoring</td></tr>
+<tr><td><code>PATCH</code></td><td><code>/v1/domains/{id}</code></td><td>write</td><td>Update status (<code>monitored</code> or <code>paused</code>)</td></tr>
+<tr><td><code>DELETE</code></td><td><code>/v1/domains/{id}</code></td><td>admin</td><td>Remove domain and all its data</td></tr>
+<tr><td><code>GET</code></td><td><code>/v1/domains/{id}/health</code></td><td>read</td><td>Full health + findings for one domain</td></tr>
+<tr><td><code>GET</code></td><td><code>/v1/domains/{id}/dns/snapshots</code></td><td>read</td><td>DNS drift timeline</td></tr>
+<tr><td><code>POST</code></td><td><code>/v1/domains/{id}/dns/recheck</code></td><td>write</td><td>Trigger immediate DNS recheck</td></tr>
+</tbody></table>
+
+<h3>Messages &amp; analytics</h3>
+
+<table><tbody><tr><th><strong>Method</strong></th><th><strong>Path</strong></th><th><strong>Scope</strong></th><th><strong>Description</strong></th></tr>
+<tr><td><code>GET</code></td><td><code>/v1/messages</code></td><td>read</td><td>Message explorer (ClickHouse)</td></tr>
+<tr><td><code>GET</code></td><td><code>/v1/analytics/deliverability</code></td><td>read</td><td>Per-provider outcome counts</td></tr>
+<tr><td><code>GET</code></td><td><code>/v1/analytics/rejections</code></td><td>read</td><td>Classified rejection reasons</td></tr>
+<tr><td><code>GET</code></td><td><code>/v1/analytics/top-senders</code></td><td>read</td><td>Top senders by volume/spam/rejections</td></tr>
+<tr><td><code>GET</code></td><td><code>/v1/dmarc/reports</code></td><td>read</td><td>DMARC aggregate reports + alignment</td></tr>
+</tbody></table>
+
+<h3>Incidents &amp; outbound security</h3>
+
+<table><tbody><tr><th><strong>Method</strong></th><th><strong>Path</strong></th><th><strong>Scope</strong></th><th><strong>Description</strong></th></tr>
+<tr><td><code>GET</code></td><td><code>/v1/incidents</code></td><td>read</td><td>List incidents (filter by status, domain)</td></tr>
+<tr><td><code>POST</code></td><td><code>/v1/incidents/{id}/resolve</code></td><td>write</td><td>Mark incident resolved</td></tr>
+<tr><td><code>GET</code></td><td><code>/v1/rbl/status</code></td><td>read</td><td>Relay egress IP DNSBL status</td></tr>
+<tr><td><code>GET</code></td><td><code>/v1/anomaly/recent</code></td><td>read</td><td>Recent volume anomalies</td></tr>
+<tr><td><code>GET</code></td><td><code>/v1/reputation</code></td><td>read</td><td>FBL complaints + Postmaster reputation</td></tr>
+<tr><td><code>GET</code></td><td><code>/v1/auth-security</code></td><td>read</td><td>Credential compromise signals</td></tr>
+<tr><td><code>POST</code></td><td><code>/v1/auth-security/{user}/lock</code></td><td>admin</td><td>Lock/unlock a compromised credential</td></tr>
+</tbody></table>
+
+<h3>Users &amp; auth</h3>
+
+<table><tbody><tr><th><strong>Method</strong></th><th><strong>Path</strong></th><th><strong>Scope</strong></th><th><strong>Description</strong></th></tr>
+<tr><td><code>POST</code></td><td><code>/v1/auth/login</code></td><td>public</td><td>Email + password login → session token</td></tr>
+<tr><td><code>POST</code></td><td><code>/v1/auth/logout</code></td><td>—</td><td>Revoke session</td></tr>
+<tr><td><code>GET</code></td><td><code>/v1/me</code></td><td>read</td><td>Current caller info (tenant, scopes, role)</td></tr>
+<tr><td><code>POST</code></td><td><code>/v1/me/password</code></td><td>—</td><td>Change own password</td></tr>
+<tr><td><code>GET</code></td><td><code>/v1/users</code></td><td>admin</td><td>List tenant users</td></tr>
+<tr><td><code>POST</code></td><td><code>/v1/users</code></td><td>admin</td><td>Create a user</td></tr>
+</tbody></table>
+
+<h3>SMTP users &amp; settings</h3>
+
+<table><tbody><tr><th><strong>Method</strong></th><th><strong>Path</strong></th><th><strong>Scope</strong></th><th><strong>Description</strong></th></tr>
+<tr><td><code>GET</code></td><td><code>/v1/smtp-users</code></td><td>admin</td><td>List SMTP submission credentials</td></tr>
+<tr><td><code>POST</code></td><td><code>/v1/smtp-users</code></td><td>admin</td><td>Create credential</td></tr>
+<tr><td><code>PATCH</code></td><td><code>/v1/smtp-users/{id}</code></td><td>admin</td><td>Enable/disable or reset password</td></tr>
+<tr><td><code>DELETE</code></td><td><code>/v1/smtp-users/{id}</code></td><td>admin</td><td>Delete credential</td></tr>
+<tr><td><code>GET</code></td><td><code>/v1/settings</code></td><td>read</td><td>Get tenant mail settings</td></tr>
+<tr><td><code>PUT</code></td><td><code>/v1/settings</code></td><td>admin</td><td>Update tenant mail settings</td></tr>
+<tr><td><code>GET</code></td><td><code>/v1/audit</code></td><td>read</td><td>Audit log of mutating API calls</td></tr>
+</tbody></table>
+
+
+<h2>14. Backup &amp; Recovery</h2>
+
+<h3>PostgreSQL backup (manual)</h3>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.prod.yml \
+  --profile app --env-file deploy/.env \
+  exec postgres \
+  pg_dump -U mxsentinel mxsentinel \
+  | gzip > mxsentinel-pg-$(date +%Y%m%d-%H%M%S).sql.gz
+]]></ac:plain-text-body></ac:structured-macro>
+
+<h3>PostgreSQL restore</h3>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+gunzip -c mxsentinel-pg-YYYYMMDD-HHMMSS.sql.gz | \
+  docker compose … exec -T postgres \
+  psql -U mxsentinel mxsentinel
+]]></ac:plain-text-body></ac:structured-macro>
+
+<h3>PostgreSQL automated backups (cron)</h3>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+# /etc/cron.d/mxsentinel-backup
+0 3 * * * root docker compose -f /root/mxsentinel/deploy/docker-compose.yml \
+  -f /root/mxsentinel/deploy/docker-compose.prod.yml \
+  --profile app --env-file /root/mxsentinel/deploy/.env \
+  exec -T postgres pg_dump -U mxsentinel mxsentinel \
+  | gzip > /var/backups/mxsentinel/pg-$(date +\%Y\%m\%d).sql.gz
+]]></ac:plain-text-body></ac:structured-macro>
+
+<h3>ClickHouse backup</h3>
+
+<p>ClickHouse data is telemetry — high volume, reconstructible from maillogs. Formal backups are optional; the ClickHouse native backup command can be used if needed:</p>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+docker compose … exec clickhouse \
+  clickhouse-client --query="BACKUP DATABASE mxsentinel TO Disk('default', 'backup.zip')"
+]]></ac:plain-text-body></ac:structured-macro>
+
+<h3>What data is critical</h3>
+
+<table><tbody><tr><th><strong>Store</strong></th><th><strong>Criticality</strong></th><th><strong>Notes</strong></th></tr>
+<tr><td>PostgreSQL</td><td><strong>Critical</strong> — back up daily</td><td>Tenants, users, domains, incidents, settings — all configuration</td></tr>
+<tr><td>ClickHouse</td><td>Medium</td><td>Telemetry is reconstructible from maillogs; loses message explorer history if not backed up</td></tr>
+<tr><td>MinIO</td><td>Low</td><td>Raw DMARC XML — useful forensically but not operationally critical</td></tr>
+<tr><td>Redis</td><td>None</td><td>Ephemeral — sessions and rate limit counters; auto-rebuilds</td></tr>
+</tbody></table>
+
+
+<h2>15. Security Hardening</h2>
+
+<h3>Pre-launch checklist</h3>
+
+<ul>
+<li>[ ] All secrets in <code>deploy/.env</code> are strong and unique. Not the example defaults. Use <code>openssl rand -hex 32</code>.</li>
+<li>[ ] <code>deploy/.env</code> is NOT committed to git. Verify: <code>git status deploy/.env</code> → should be ignored.</li>
+<li>[ ] <code>sudo ufw status</code> shows only ports 22, 80, 443 open to the internet.</li>
+<li>[ ] <code>ss -tlnp | grep -E &#x27;5432|9000|6379|4222&#x27;</code> shows <code>127.0.0.1:PORT</code> on every line — not <code>0.0.0.0</code>.</li>
+<li>[ ] TLS is active: <code>curl -I https://sentinel.example.com</code> returns <code>HTTP/2 200</code> with no certificate warnings.</li>
+<li>[ ] At least one owner account created with a strong password.</li>
+<li>[ ] SSH on port 22 uses key-based authentication only (<code>PasswordAuthentication no</code> in <code>/etc/ssh/sshd_config</code>).</li>
+</ul>
+
+<h3>API token discipline</h3>
+
+<ul>
+<li>Issue tokens with the minimum necessary scope.</li>
+<li><code>read</code>-only tokens for dashboards and monitoring systems.</li>
+<li><code>read,write</code> for integrations that trigger rechecks or resolve incidents.</li>
+<li><code>admin</code> only for provisioning scripts.</li>
+<li>Rotate tokens regularly. Revoke compromised tokens immediately via the database:</li>
+</ul>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+# Revoke a specific token by prefix
+docker compose … exec postgres \
+  psql -U mxsentinel -c "UPDATE api_credentials SET revoked_at = now() WHERE token_prefix = 'mxs_abc123';"
+]]></ac:plain-text-body></ac:structured-macro>
+
+<h3>Privacy guarantee</h3>
+
+<p>Mail Captain never stores or logs:</p>
+<ul>
+<li>Email message bodies</li>
+<li>Email subject lines</li>
+<li>Full recipient addresses (recipient domains are stored; individual addresses are HMAC-SHA256-hashed with <code>MXS_TELEMETRY_HASHKEY</code> before storage)</li>
+</ul>
+
+<p>This is enforced at the <code>telemetryd</code> parser boundary — nothing downstream ever sees this data.</p>
+
+
+<h2>16. Troubleshooting</h2>
+
+<h3>&quot;Failed to fetch&quot; in the dashboard</h3>
+
+<p>The browser can&#x27;t reach the API. Most common cause: the dashboard was built with <code>NEXT_PUBLIC_API_BASE=http://localhost:8080</code> (the dev default), which points to the browser&#x27;s localhost, not the server.</p>
+
+<p><strong>Fix:</strong> Rebuild using the prod overlay, which sets <code>NEXT_PUBLIC_API_BASE=https://&lt;MXS_DOMAIN&gt;</code>:</p>
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.prod.yml \
+  --profile app --env-file deploy/.env up -d --build
+]]></ac:plain-text-body></ac:structured-macro>
+
+<p>Verify what URL is baked in:</p>
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+docker inspect mxsentinel-dashboard-1 | grep NEXT_PUBLIC_API_BASE
+]]></ac:plain-text-body></ac:structured-macro>
+
+<h3>TLS certificate not issued</h3>
+
+<p>Caddy logs show an ACME error. Common causes:</p>
+
+<table><tbody><tr><th><strong>Cause</strong></th><th><strong>Fix</strong></th></tr>
+<tr><td>DNS A record not yet propagated</td><td>Wait for propagation; <code>dig +short sentinel.example.com</code> should return the VPS IP</td></tr>
+<tr><td>Port 80 blocked</td><td>Open port 80: <code>sudo ufw allow 80/tcp</code></td></tr>
+<tr><td>Wrong <code>MXS_DOMAIN</code></td><td>Must exactly match the DNS hostname — no trailing dots, no protocol prefix</td></tr>
+<tr><td>Rate limited by Let&#x27;s Encrypt</td><td>Wait 1 hour; check Caddy logs for the specific error</td></tr>
+</tbody></table>
+
+<h3>SMTP authentication failure (<code>535 5.7.8</code>)</h3>
+
+<table><tbody><tr><th><strong>Cause</strong></th><th><strong>Fix</strong></th></tr>
+<tr><td>Wrong username or password</td><td>Check SMTP Users page; username must match exactly including case</td></tr>
+<tr><td>User is disabled</td><td>Enable via SMTP Users page or <code>PATCH /v1/smtp-users/{id}</code> <code>{&quot;enabled&quot;: true}</code></td></tr>
+<tr><td>User deleted</td><td>Recreate the credential</td></tr>
+<tr><td>Submitting on port 25</td><td>Use port 587 — port 25 does not accept SASL</td></tr>
+</tbody></table>
+
+<h3><code>530 5.7.0 Must issue a STARTTLS command first</code></h3>
+
+<p>The client tried to authenticate before negotiating TLS. Enable STARTTLS / <code>requireTLS</code> on the client. The relay never offers <code>AUTH</code> in cleartext (<code>smtpd_tls_auth_only = yes</code>).</p>
+
+<h3>Mail accepted but <code>dmarc=fail</code> at receiver</h3>
+
+<p>SPF or DKIM is not aligned with the <code>From:</code> domain. Check:</p>
+<ol>
+<li>Dashboard → <strong>Domains</strong> → look for SPF or DKIM findings</li>
+<li>Verify the SPF <code>include:</code> is published for the sending domain</li>
+<li>Verify the DKIM selector TXT record is published and matches the relay&#x27;s signing selector (Settings → DKIM selector)</li>
+</ol>
+
+<h3>DNS findings not updating</h3>
+
+<p><code>dnsd</code> polls every 5 minutes by default. For an immediate check: Dashboard → <strong>Domains → click domain → Recheck now</strong>.</p>
+
+<p>If <code>dnsd</code> is not running:</p>
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+docker compose … ps dnsd   # should be "Up"
+docker compose … logs dnsd --tail 30
+]]></ac:plain-text-body></ac:structured-macro>
+
+<h3>Incidents not being created</h3>
+
+<p>Check <code>incidentd</code> and the services that feed it:</p>
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+docker compose … logs incidentd --tail 30
+docker compose … logs correld --tail 30
+docker compose … logs repd --tail 30
+]]></ac:plain-text-body></ac:structured-macro>
+
+<p>NATS must be healthy — all these services consume from the event bus:</p>
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+docker compose … ps nats
+]]></ac:plain-text-body></ac:structured-macro>
+
+<h3>Message Explorer is empty</h3>
+
+<p><code>ingestd</code> writes SMTP events to ClickHouse. Check:</p>
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+docker compose … logs ingestd --tail 30
+docker compose … ps clickhouse
+]]></ac:plain-text-body></ac:structured-macro>
+
+<p>If <code>telemetryd</code> is not running (relay profile not enabled), no SMTP events are published to the bus. Replay a sample maillog to verify the pipeline:</p>
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+docker compose … run --rm apid \
+  /usr/local/bin/mxctl replay   # uses test/fixtures/maillog.sample
+]]></ac:plain-text-body></ac:structured-macro>
+
+<h3>AI summaries not appearing on incidents</h3>
+
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+docker compose … logs aid --tail 50
+]]></ac:plain-text-body></ac:structured-macro>
+
+<p>Common causes:</p>
+<ul>
+<li>Ollama not running: <code>curl http://localhost:11434/health</code></li>
+<li>Wrong <code>MXS_AI_ENDPOINT</code> — on Linux, <code>host.docker.internal</code> may not resolve; use the bridge IP instead</li>
+<li>Model not pulled: <code>ollama list</code> on the host</li>
+</ul>
+
+<h3>Container fails to start — port conflict</h3>
+
+<p><code>apid</code> defaults to <code>:8080</code>. If something else is using that port on the host, either stop it or change the compose port mapping. Check:</p>
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[
+ss -tlnp | grep 8080
+]]></ac:plain-text-body></ac:structured-macro>
+
+
+<h2>17. Glossary</h2>
+
+<table><tbody><tr><th><strong>Term</strong></th><th><strong>Definition</strong></th></tr>
+<tr><td><strong>SMTP submission user</strong></td><td>A credential (username + bcrypt-hashed password) stored in Postgres that a smarthost authenticates with to relay mail through Postfix. Created in the Dashboard or via <code>mxctl smtp-user create</code>.</td></tr>
+<tr><td><strong>Tenant</strong></td><td>An isolated account in Mail Captain. All domains, users, telemetry, and incidents belong to a tenant. Hosting providers would create one tenant per customer.</td></tr>
+<tr><td><strong>Snapshot</strong></td><td>A timestamped, checksummed capture of a domain&#x27;s DNS state (SPF, DKIM, DMARC, MX, etc.). A new snapshot is only written when the posture changes.</td></tr>
+<tr><td><strong>Finding</strong></td><td>A specific DNS validation issue attached to a snapshot. Has a <code>category</code> (spf, dkim, dmarc, mx), a <code>severity</code> (info, warning, critical), a <code>code</code> (e.g. <code>SPF_LOOKUP_LIMIT</code>), and a human-readable <code>message</code>.</td></tr>
+<tr><td><strong>Incident</strong></td><td>A persisted intelligence-layer alert produced by <code>incidentd</code> from <code>correld</code>, <code>repd</code>, <code>rbld</code>, <code>anomalyd</code>, or <code>authwatchd</code> events. Has a status (<code>open</code>, <code>acknowledged</code>, <code>resolved</code>) and optionally AI-generated analysis.</td></tr>
+<tr><td><strong>Bounce class</strong></td><td>Mail Captain&#x27;s classification of a permanent delivery failure reason: e.g. <code>auth</code> (authentication/policy rejection), <code>reputation</code> (spam/RBL), <code>content</code>, <code>quota</code>, etc.</td></tr>
+<tr><td><strong>DNSBL / RBL</strong></td><td>DNS-based blocklist. A publicly-queryable list of IP addresses known to send spam. Being listed causes deliverability to degrade across major providers.</td></tr>
+<tr><td><strong>FBL</strong></td><td>Feedback Loop. ISPs (e.g. Yahoo, Microsoft) forward spam complaint reports (ARF format) to the sending domain&#x27;s <code>abuse@</code> address when recipients hit the spam button.</td></tr>
+<tr><td><strong>DMARC</strong></td><td>Domain-based Message Authentication, Reporting, and Conformance. A policy published in DNS that tells receivers what to do when SPF or DKIM fail, and where to send aggregate reports.</td></tr>
+<tr><td><strong>DKIM selector</strong></td><td>A label used to identify which DKIM key signed a message. Published at <code>&lt;selector&gt;._domainkey.example.com</code>.</td></tr>
+<tr><td><strong>SPF include endpoint</strong></td><td>An <code>include:</code> mechanism your tenants reference in their SPF records to authorize your relay&#x27;s IPs without listing them directly.</td></tr>
+<tr><td><strong>mxctl</strong></td><td>The operator CLI. Baked into the Go service image. Used for migrations, seeding, API key creation, user management, and domain management. Run via <code>docker compose run --rm apid /usr/local/bin/mxctl …</code>.</td></tr>
+<tr><td><strong>JetStream</strong></td><td>NATS&#x27;s durable streaming layer. Mail Captain uses JetStream streams (<code>SMTP</code>, <code>DNS</code>, <code>REPUTATION</code>, <code>AI</code>) for at-least-once event delivery between services.</td></tr>
+<tr><td><strong>Telemetry</strong></td><td>Structured per-message metadata emitted by <code>telemetryd</code> from Postfix maillogs. Includes outcome, SMTP code, provider, relay IP, bounce class, TLS info, queue timing. Never includes message body or subject.</td></tr>
+</tbody></table>

@@ -162,6 +162,7 @@ services:
     command: ["/usr/local/bin/apid"]
     ports:
       - "127.0.0.1:8080:8080"
+      - "127.0.0.1:9090:9090"   # obs /healthz + /metrics (used by deploy/self-update.sh health gate)
     depends_on:
       migrate: {condition: service_completed_successfully}
       postgres: {condition: service_healthy}
@@ -298,6 +299,128 @@ services:
     depends_on:
       migrate: {condition: service_completed_successfully}
       nats: {condition: service_healthy}
+
+  # ── Deliverability & observability daemons (see docs/<feature>.md for each) ──────────
+
+  # Snapshots a composite 0–100 deliverability health score per domain on a ticker.
+  scored:
+    <<: *app
+    command: ["/usr/local/bin/scored"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      postgres: {condition: service_healthy}
+      clickhouse: {condition: service_healthy}
+
+  # MTA-STS policy/cert monitor + TLS-RPT (RFC 8460) report ingest. Route TLS-RPT
+  # aggregate reports (rua) to ./tlsrpt-drop on the host to have them ingested.
+  tlsrptd:
+    <<: *app
+    command: ["/usr/local/bin/tlsrptd", "--dir", "/tlsrpt-drop"]
+    volumes:
+      - ../tlsrpt-drop:/tlsrpt-drop
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      nats: {condition: service_healthy}
+
+  # Classifies SMTP bounces and maintains per-tenant suppression lists.
+  bounced:
+    <<: *app
+    command: ["/usr/local/bin/bounced"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      clickhouse: {condition: service_healthy}
+
+  # Outbound-failover circuit breaker. When DIRECT delivery to a receiver provider (default
+  # Microsoft/Outlook) is sustainedly deferred with TRANSIENT 4xx codes, it reroutes that
+  # provider's mail to a fallback smarthost (e.g. mail.baby). It deliberately does NOT fail
+  # over spam/reputation 5xx blocks (rerouting those launders reputation onto the fallback's
+  # IPs). OFF by default — arm with MXS_FAILOVER_ENABLED=true after wiring the host side
+  # (sudo bash deploy/install.sh --wire-relay-failover). Writes the failover domain set to a
+  # bind-mounted state file that a HOST-SIDE hook reads to flip the Postfix transport overlay
+  # and requeue deferred mail; relayfailoverd never touches host Postfix. See docs/relay-failover.md.
+  relayfailoverd:
+    <<: *app
+    command: ["/usr/local/bin/relayfailoverd"]
+    environment:
+      <<: *app-env
+      MXS_FAILOVER_ENABLED: "${MXS_FAILOVER_ENABLED:-false}"
+      MXS_FAILOVER_PROVIDER: "${MXS_FAILOVER_PROVIDER:-microsoft}"
+      MXS_FAILOVER_DOMAINS: "${MXS_FAILOVER_DOMAINS:-}"
+      MXS_FAILOVER_WINDOW: "${MXS_FAILOVER_WINDOW:-10m}"
+      MXS_FAILOVER_INTERVAL: "${MXS_FAILOVER_INTERVAL:-1m}"
+      MXS_FAILOVER_HOLD: "${MXS_FAILOVER_HOLD:-30m}"
+      MXS_FAILOVER_TRIP_RATE: "${MXS_FAILOVER_TRIP_RATE:-0.6}"
+      MXS_FAILOVER_MIN_ATTEMPTS: "${MXS_FAILOVER_MIN_ATTEMPTS:-50}"
+      MXS_FAILOVER_MIN_DEFERS: "${MXS_FAILOVER_MIN_DEFERS:-20}"
+      MXS_FAILOVER_MAX_DOMAINS: "${MXS_FAILOVER_MAX_DOMAINS:-25}"
+      MXS_FAILOVER_STATE_FILE: "/var/lib/mxsentinel/failover-domains"
+      RELAY_TENANT_ID: "${RELAY_TENANT_ID:-}"
+    volumes:
+      # Host dir holding the failover-domains state file the host-side hook reads. Writable so
+      # relayfailoverd can update it atomically (temp file + rename). Matches the hook's default
+      # (deploy/failover-state/failover-domains).
+      - "${FAILOVER_STATE_DIR:-../failover-state}:/var/lib/mxsentinel"
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      clickhouse: {condition: service_healthy}
+
+  # Microsoft SNDS poller (needs MXS_SNDS_KEY) + JMRP ARF complaint ingest (route JMRP
+  # complaints to ./jmrp-drop). Skips the SNDS poll cleanly when MXS_SNDS_KEY is unset.
+  sndsd:
+    <<: *app
+    command: ["/usr/local/bin/sndsd", "--dir", "/jmrp-drop"]
+    environment:
+      <<: *app-env
+      MXS_SNDS_KEY: "${MXS_SNDS_KEY:-}"
+    volumes:
+      - ../jmrp-drop:/jmrp-drop
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      clickhouse: {condition: service_healthy}
+
+  # Inbox-placement seed testing. Set MXS_SEEDTEST_IMAP_ACCOUNTS (JSON) to enable
+  # placement collection; without it, runs record "sent, pending".
+  seedd:
+    <<: *app
+    command: ["/usr/local/bin/seedd"]
+    environment:
+      <<: *app-env
+      MXS_SEEDTEST_IMAP_ACCOUNTS: "${MXS_SEEDTEST_IMAP_ACCOUNTS:-}"
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      postgres: {condition: service_healthy}
+      clickhouse: {condition: service_healthy}
+
+  # Synthetic SMTP probing of the relay's own endpoints (connect/EHLO/STARTTLS cert/AUTH).
+  # Probes MXS_PROBE_ENDPOINTS (falls back to RELAY_NODE_IP from the shared env).
+  probed:
+    <<: *app
+    command: ["/usr/local/bin/probed"]
+    environment:
+      <<: *app-env
+      MXS_PROBE_ENDPOINTS: "${MXS_PROBE_ENDPOINTS:-}"
+      MXS_PROBE_HOST: "${MXS_PROBE_HOST:-}"
+      MXS_PROBE_TENANT_ID: "${MXS_PROBE_TENANT_ID:-}"
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      nats: {condition: service_healthy}
+
+  # Per-domain BIMI/VMC readiness monitor (cross-checks DMARC enforcement).
+  bimid:
+    <<: *app
+    command: ["/usr/local/bin/bimid"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      postgres: {condition: service_healthy}
+
+  # Dispatches firing alerts/incidents to per-tenant channels (Slack/webhook/PagerDuty/
+  # email). Channel configs live encrypted in Postgres; managed via /v1/alert-channels.
+  notifyd:
+    <<: *app
+    command: ["/usr/local/bin/notifyd"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      postgres: {condition: service_healthy}
 
   dashboard:
     build:

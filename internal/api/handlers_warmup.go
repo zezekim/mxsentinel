@@ -49,19 +49,19 @@ type warmupPlanJSON struct {
 }
 
 type warmupDayStatJSON struct {
-	DayNumber      int     `json:"day_number"`
-	StatDate       string  `json:"stat_date"`
-	Sent           int     `json:"sent"`
-	Delivered      int     `json:"delivered"`
-	Bounced        int     `json:"bounced"`
-	Deferred       int     `json:"deferred"`
+	DayNumber      int      `json:"day_number"`
+	StatDate       string   `json:"stat_date"`
+	Sent           int      `json:"sent"`
+	Delivered      int      `json:"delivered"`
+	Bounced        int      `json:"bounced"`
+	Deferred       int      `json:"deferred"`
 	AcceptanceRate *float64 `json:"acceptance_rate"`
 }
 
 type warmupPlanDetailJSON struct {
 	warmupPlanJSON
-	DayStats          []warmupDayStatJSON `json:"day_stats"`
-	RecommendedToday  int                 `json:"recommended_today"`
+	DayStats         []warmupDayStatJSON `json:"day_stats"`
+	RecommendedToday int                 `json:"recommended_today"`
 }
 
 // ---- helpers ---------------------------------------------------------------
