@@ -138,4 +138,5 @@ Next.js App Router (TypeScript). Points at `apid` via `NEXT_PUBLIC_API_TOKEN` (f
 | `docs/nl-analytics.md` | Natural-language analytics ("ask your logs") + privacy design |
 | `docs/bimi.md` | BIMI/VMC validation + readiness checklist |
 | `docs/alert-channels.md` | Alert delivery channels (Slack/webhook/PagerDuty/email) |
-| `docs/relay-failover.md` | Outbound failover: reroute transiently-throttled provider mail to a fallback smarthost (circuit breaker + host hook) |
+| `docs/relay-failover.md` | Outbound failover: reroute throttled/blocked provider mail to a fallback smarthost (dashboard-managed; always-route or circuit breaker + host hook) |
+| `docs/settings-inventory.md` | Every config knob categorized: already-web / safe-to-move / must-stay-`.env` / must-stay-host, and the mechanism for web-managed settings |

@@ -14,6 +14,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -41,9 +42,6 @@ func run(interval time.Duration) error {
 		return err
 	}
 	bcfg := bimi.LoadConfig()
-	if interval <= 0 {
-		interval = bcfg.Interval
-	}
 
 	log := obs.NewLogger("bimid", cfg.LogLevel)
 
@@ -64,6 +62,15 @@ func run(interval time.Duration) error {
 		return err
 	}
 	defer pg.Close()
+
+	// Dashboard-managed tuning wins over env when the relay tenant is known.
+	applyTuningOverlay(ctx, pg, log, &bcfg)
+
+	// Resolve the effective poll interval: an explicit -interval flag wins, otherwise use the
+	// (possibly dashboard-overlaid) config value.
+	if interval <= 0 {
+		interval = bcfg.Interval
+	}
 
 	w := &worker{
 		log:      log,
@@ -87,6 +94,29 @@ func run(interval time.Duration) error {
 			w.pollAll(ctx)
 		}
 	}
+}
+
+// applyTuningOverlay overlays dashboard-managed monitoring tuning (stored per relay tenant)
+// onto the env-derived BIMI config. Dashboard values win; unset (0) fields are left as-is.
+// Precedence is dashboard > env > default. A DB read error is logged and treated as "not
+// configured" so the daemon still starts on its env/defaults.
+func applyTuningOverlay(ctx context.Context, pg *pgstore.Store, log *slog.Logger, bcfg *bimi.Config) {
+	tenant := strings.TrimSpace(os.Getenv("RELAY_TENANT_ID"))
+	if tenant == "" {
+		return
+	}
+	t, err := pg.GetMonitoringTuning(ctx, tenant)
+	if err != nil {
+		log.Warn("read monitoring tuning; using env/defaults", "err", err)
+		return
+	}
+	if t.BIMI.IntervalSecs > 0 {
+		bcfg.Interval = time.Duration(t.BIMI.IntervalSecs) * time.Second
+	}
+	if t.BIMI.FetchTimeoutSecs > 0 {
+		bcfg.FetchTimeout = time.Duration(t.BIMI.FetchTimeoutSecs) * time.Second
+	}
+	log.Info("applied dashboard monitoring tuning", "tenant_id", tenant)
 }
 
 type worker struct {

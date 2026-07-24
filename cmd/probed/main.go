@@ -59,10 +59,6 @@ func run(intervalOverride time.Duration) error {
 	log := obs.NewLogger("probed", cfg.LogLevel)
 
 	pcfg := smtpprobe.LoadConfig()
-	interval := pcfg.Interval
-	if intervalOverride > 0 {
-		interval = intervalOverride
-	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -81,6 +77,14 @@ func run(intervalOverride time.Duration) error {
 		return err
 	}
 	defer pg.Close()
+
+	// Dashboard-managed tuning wins over env when the relay tenant is known.
+	applyTuningOverlay(ctx, pg, log, &pcfg)
+
+	interval := pcfg.Interval
+	if intervalOverride > 0 {
+		interval = intervalOverride
+	}
 
 	// ClickHouse is best-effort: probing/recording to Postgres must not depend on it.
 	var ch *chstore.Store
@@ -151,6 +155,40 @@ func run(intervalOverride time.Duration) error {
 			w.scan(ctx)
 		}
 	}
+}
+
+// applyTuningOverlay overlays dashboard-managed monitoring tuning (stored per relay tenant)
+// onto the env-derived prober config. Dashboard values win; unset (0 / "") fields are left
+// as-is. Precedence is dashboard > env > default. Booleans are enabled if either source turns
+// them on. A DB read error is logged and treated as "not configured".
+func applyTuningOverlay(ctx context.Context, pg *pgstore.Store, log *slog.Logger, pcfg *smtpprobe.Config) {
+	tenant := strings.TrimSpace(os.Getenv("RELAY_TENANT_ID"))
+	if tenant == "" {
+		return
+	}
+	t, err := pg.GetMonitoringTuning(ctx, tenant)
+	if err != nil {
+		log.Warn("read monitoring tuning; using env/defaults", "err", err)
+		return
+	}
+	if t.Probe.IntervalSecs > 0 {
+		pcfg.Interval = time.Duration(t.Probe.IntervalSecs) * time.Second
+	}
+	if t.Probe.ConnectTimeoutSecs > 0 {
+		pcfg.ConnectTimeout = time.Duration(t.Probe.ConnectTimeoutSecs) * time.Second
+	}
+	if t.Probe.CommandTimeoutSecs > 0 {
+		pcfg.CommandTimeout = time.Duration(t.Probe.CommandTimeoutSecs) * time.Second
+	}
+	if t.Probe.CertWarnDays > 0 {
+		pcfg.CertWarnThreshold = time.Duration(t.Probe.CertWarnDays) * 24 * time.Hour
+	}
+	if t.Probe.EHLOName != "" {
+		pcfg.EHLOName = t.Probe.EHLOName
+	}
+	pcfg.TLSInsecure = pcfg.TLSInsecure || t.Probe.TLSInsecure
+	pcfg.CheckResponse = pcfg.CheckResponse || t.Probe.CheckResponse
+	log.Info("applied dashboard monitoring tuning", "tenant_id", tenant)
 }
 
 type worker struct {

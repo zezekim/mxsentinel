@@ -50,3 +50,4 @@ telemetry-spool.ndjson
 *.swp
 .idea/
 .vscode/
+.claude/worktrees/

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -65,6 +66,22 @@ func run() error {
 		return err
 	}
 	defer pg.Close()
+
+	// Overlay the dashboard-managed dmarcpulld tuning (Settings → Delivery & data tuning) over
+	// env; dashboard values win when set. Applied at startup (restart to pick up a change). A DB
+	// read error is logged and treated as "not set".
+	if tenantID := strings.TrimSpace(os.Getenv("RELAY_TENANT_ID")); tenantID != "" {
+		if t, terr := pg.GetDeliveryTuning(ctx, tenantID); terr != nil {
+			log.Warn("read dashboard delivery tuning; using env config", "err", terr)
+		} else {
+			if t.DMARCPull.IntervalSecs > 0 {
+				interval = time.Duration(t.DMARCPull.IntervalSecs) * time.Second
+			}
+			if t.DMARCPull.LookbackDays > 0 {
+				dp.LookbackDays = t.DMARCPull.LookbackDays
+			}
+		}
+	}
 
 	ch, err := chstore.New(ctx, cfg.ClickHouse)
 	if err != nil {

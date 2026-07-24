@@ -27,6 +27,7 @@ type Server struct {
 	sessions      auth.SessionStore // nil disables user login
 	enc           *crypto.Encryptor // nil = passthrough (plaintext credentials)
 	publicBaseURL string            // e.g. https://sentinel.squidix.net; "" → return relative /trace paths
+	nlMaxTools    int               // dashboard override for nlquery MaxTools; 0 = use env/default
 }
 
 // New constructs the API server. corsOrigin is the Access-Control-Allow-Origin value
@@ -86,6 +87,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/smtp-users/{id}", s.requireScope(ScopeAdmin, s.handleDeleteSMTPUser))
 	mux.HandleFunc("GET /v1/settings", s.requireScope(ScopeRead, s.handleGetSettings))
 	mux.HandleFunc("PUT /v1/settings", s.requireScope(ScopeAdmin, s.handleUpdateSettings))
+	mux.HandleFunc("GET /v1/settings/smarthost", s.requireScope(ScopeRead, s.handleGetSmarthost))
+	mux.HandleFunc("PUT /v1/settings/smarthost", s.requireScope(ScopeAdmin, s.handleUpdateSmarthost))
+	mux.HandleFunc("GET /v1/settings/integrations", s.requireScope(ScopeRead, s.handleGetIntegrationSettings))
+	mux.HandleFunc("PUT /v1/settings/integrations", s.requireScope(ScopeAdmin, s.handleUpdateIntegrationSettings))
+	// Dashboard-managed daemon tuning (non-secret knobs; daemons read at startup).
+	mux.HandleFunc("GET /v1/settings/tuning/abuse", s.requireScope(ScopeRead, s.handleGetAbuseTuning))
+	mux.HandleFunc("PUT /v1/settings/tuning/abuse", s.requireScope(ScopeAdmin, s.handleUpdateAbuseTuning))
+	mux.HandleFunc("GET /v1/settings/tuning/monitoring", s.requireScope(ScopeRead, s.handleGetMonitoringTuning))
+	mux.HandleFunc("PUT /v1/settings/tuning/monitoring", s.requireScope(ScopeAdmin, s.handleUpdateMonitoringTuning))
+	mux.HandleFunc("GET /v1/settings/tuning/delivery", s.requireScope(ScopeRead, s.handleGetDeliveryTuning))
+	mux.HandleFunc("PUT /v1/settings/tuning/delivery", s.requireScope(ScopeAdmin, s.handleUpdateDeliveryTuning))
 	// Alert rules & notification channels
 	mux.HandleFunc("GET /v1/alert-rules", s.requireScope(ScopeRead, s.handleListAlertRules))
 	mux.HandleFunc("POST /v1/alert-rules", s.requireScope(ScopeWrite, s.handleCreateAlertRule))
@@ -173,6 +185,14 @@ func (s *Server) WithEncryptor(enc *crypto.Encryptor) *Server {
 // relative "/trace/<token>" path and the caller composes its own origin.
 func (s *Server) WithPublicBaseURL(base string) *Server {
 	s.publicBaseURL = strings.TrimRight(base, "/")
+	return s
+}
+
+// WithNLMaxTools sets the dashboard-managed override for the NL-analytics tool cap
+// (MXS_NLQUERY_MAX_TOOLS). apid resolves it once at startup from the tenant's delivery tuning;
+// handleAsk prefers it over the env/default when > 0. See GetDeliveryTuning.
+func (s *Server) WithNLMaxTools(n int) *Server {
+	s.nlMaxTools = n
 	return s
 }
 

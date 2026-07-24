@@ -73,7 +73,22 @@ catch-all), so a failover domain wins by first-match; everything else routes nor
 
 ## 3. Setup
 
-### 3a. Wire the host side (one-time, on the relay box)
+### 3a. Configure in the dashboard (recommended)
+
+**Settings → Outbound fallback smarthost.** Set the host/port/username/password, choose the
+recipient domains, and pick a mode:
+
+- **Always route** — pin those domains to the smarthost unconditionally. Use this for a
+  persistent block (e.g. Outlook has your sending IP on S3140/S3150). This is the common case.
+- **Only on throttling** — the 4xx circuit breaker below (auto-reverts when defers clear).
+
+The password is encrypted at rest (write-only in the API). `relayfailoverd` reads this config
+and renders the Postfix credentials + transport onto the relay via the host hook, so you never
+hand-edit `/etc/postfix`. One host-side bootstrap is still required once (defines the
+`relay-mailbaby` transport + the `transport_maps` overlay): run **§3b** a single time; after
+that, everything is dashboard-managed. See `docs/settings-inventory.md`.
+
+### 3b. Wire the host side (one-time, on the relay box)
 
 ```bash
 sudo bash deploy/install.sh --wire-relay-failover

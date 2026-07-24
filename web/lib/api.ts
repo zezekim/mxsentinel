@@ -538,6 +538,197 @@ export function updateSettings(settings: MailSettings): Promise<SettingsResponse
   return apiPut<SettingsResponse>("/v1/settings", settings);
 }
 
+export type SmarthostMode = "always" | "on_throttle";
+
+export interface Smarthost {
+  enabled: boolean;
+  host: string;
+  port: number;
+  username: string;
+  password?: string; // write-only; send to set/change, omit/blank to keep the stored one
+  password_set: boolean; // read-only
+  mode: SmarthostMode;
+  domains: string[];
+  trip_rate?: number;
+  window_secs?: number;
+  hold_secs?: number;
+  min_attempts?: number;
+  min_defers?: number;
+}
+
+export interface SmarthostResponse {
+  smarthost: Smarthost;
+}
+
+export function getSmarthost(): Promise<SmarthostResponse> {
+  return apiGet<SmarthostResponse>("/v1/settings/smarthost");
+}
+
+export function updateSmarthost(smarthost: Smarthost): Promise<SmarthostResponse> {
+  return apiPut<SmarthostResponse>("/v1/settings/smarthost", smarthost);
+}
+
+// Provider settings (AI, Microsoft SNDS, Google Postmaster, notification email). Secret
+// fields are write-only: send to set/change, omit to keep the stored one; GET reports *_set.
+export interface IntegrationSettings {
+  ai: {
+    endpoint: string;
+    model: string;
+    api_key?: string;
+    api_key_set: boolean;
+    timeout_secs: number;
+  };
+  microsoft: { snds_key?: string; snds_key_set: boolean };
+  google: { postmaster_token?: string; postmaster_token_set: boolean };
+  notify_email: {
+    host: string;
+    port: number;
+    username: string;
+    password?: string;
+    password_set: boolean;
+    from: string;
+  };
+}
+
+export interface IntegrationSettingsResponse {
+  integrations: IntegrationSettings;
+}
+
+export function getIntegrationSettings(): Promise<IntegrationSettingsResponse> {
+  return apiGet<IntegrationSettingsResponse>("/v1/settings/integrations");
+}
+
+export function updateIntegrationSettings(v: IntegrationSettings): Promise<IntegrationSettingsResponse> {
+  return apiPut<IntegrationSettingsResponse>("/v1/settings/integrations", v);
+}
+
+// ── Abuse & bounce daemon tuning ──────────────────────────────────────────
+// Non-secret runtime knobs for authwatchd / bounced. Every value is optional:
+// 0 / false means "unset — the daemon keeps its env var / built-in default".
+// Durations are integer seconds. Changes apply on daemon restart.
+
+export interface AuthwatchTuning {
+  threshold: number;
+  window_secs: number;
+  cooldown_secs: number;
+  min_volume: number;
+  distinct_rcpt: number;
+  bounce_rate: number;
+  volume_factor: number;
+  volume_floor: number;
+  offhours_start: number;
+  offhours_end: number;
+  offhours_rate: number;
+  offhours_weight: number;
+  autolock: boolean;
+}
+
+export interface BounceTuning {
+  interval_secs: number;
+  lookback_secs: number;
+  max_rows: number;
+}
+
+export interface AbuseTuning {
+  authwatch: AuthwatchTuning;
+  bounce: BounceTuning;
+}
+
+export interface AbuseTuningResponse {
+  tuning_abuse: AbuseTuning;
+}
+
+export function getAbuseTuning(): Promise<AbuseTuningResponse> {
+  return apiGet<AbuseTuningResponse>("/v1/settings/tuning/abuse");
+}
+
+export function updateAbuseTuning(tuning: AbuseTuning): Promise<AbuseTuningResponse> {
+  return apiPut<AbuseTuningResponse>("/v1/settings/tuning/abuse", tuning);
+}
+
+// ─── Monitoring daemon tuning (advanced) ──────────────────────────────────────
+// Dashboard-managed cadence/timeout knobs for tlsrptd, probed and bimid. A value of
+// 0 (or "" for ehlo_name) means "unset" — the daemon falls back to its env var / default.
+// Changes apply on the next daemon restart.
+
+export interface MonitoringTuning {
+  tlsrpt: {
+    interval_secs: number;
+  };
+  mtasts: {
+    interval_secs: number;
+    cert_warn_days: number;
+    cert_timeout_secs: number;
+    http_timeout_secs: number;
+  };
+  probe: {
+    interval_secs: number;
+    connect_timeout_secs: number;
+    command_timeout_secs: number;
+    cert_warn_days: number;
+    ehlo_name: string;
+    tls_insecure: boolean;
+    check_response: boolean;
+  };
+  bimi: {
+    interval_secs: number;
+    fetch_timeout_secs: number;
+  };
+}
+
+export interface MonitoringTuningResponse {
+  tuning: MonitoringTuning;
+}
+
+export function getMonitoringTuning(): Promise<MonitoringTuningResponse> {
+  return apiGet<MonitoringTuningResponse>("/v1/settings/tuning/monitoring");
+}
+
+export function updateMonitoringTuning(tuning: MonitoringTuning): Promise<MonitoringTuningResponse> {
+  return apiPut<MonitoringTuningResponse>("/v1/settings/tuning/monitoring", tuning);
+}
+
+// Delivery & data tuning (notifyd / sndsd / seedd / dmarcpulld / nlquery). All fields are
+// non-secret; 0 / blank means "use the daemon default". Changes apply on daemon restart.
+export interface DeliveryTuning {
+  notify: {
+    poll_interval_secs?: number;
+    throttle_secs?: number;
+    dedup_secs?: number;
+    lookback_secs?: number;
+    http_timeout_secs?: number;
+    dashboard_url?: string;
+  };
+  snds: {
+    interval_secs?: number;
+    jmrp_scan_interval_secs?: number;
+    jmrp_complaint_threshold?: number;
+  };
+  seed: {
+    interval_secs?: number;
+    collect_window_secs?: number;
+  };
+  dmarc_pull: {
+    interval_secs?: number;
+    lookback_days?: number;
+  };
+  nl: {
+    max_tools?: number;
+  };
+}
+
+export interface DeliveryTuningResponse {
+  tuning: DeliveryTuning;
+}
+
+export function getDeliveryTuning(): Promise<DeliveryTuningResponse> {
+  return apiGet<DeliveryTuningResponse>("/v1/settings/tuning/delivery");
+}
+
+export function updateDeliveryTuning(v: DeliveryTuning): Promise<DeliveryTuningResponse> {
+  return apiPut<DeliveryTuningResponse>("/v1/settings/tuning/delivery", v);
+}
+
 // ── Top Senders ───────────────────────────────────────────────────────────
 
 export type SenderMetric = "volume" | "spam" | "rejected";

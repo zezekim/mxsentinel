@@ -33,6 +33,8 @@ import (
 	"time"
 
 	"github.com/zezekim/mxsentinel/internal/config"
+	"github.com/zezekim/mxsentinel/internal/crypto"
+	"github.com/zezekim/mxsentinel/internal/integrationsettings"
 	"github.com/zezekim/mxsentinel/internal/obs"
 	"github.com/zezekim/mxsentinel/internal/snds"
 	chstore "github.com/zezekim/mxsentinel/internal/store/clickhouse"
@@ -108,6 +110,33 @@ func run(dirFlag string, scanFlag, sndsFlag time.Duration) error {
 	} else {
 		ch = c
 		defer ch.Close()
+	}
+
+	// Overlay the dashboard-managed SNDS key (Settings → Providers & keys) over env; the
+	// dashboard value wins when set. Applied at startup (restart to pick up a change).
+	if tenantID := strings.TrimSpace(os.Getenv("RELAY_TENANT_ID")); tenantID != "" {
+		enc, _, encErr := crypto.NewEncryptor(cfg.Integration.EncryptionKey)
+		if encErr != nil {
+			log.Warn("init encryptor for provider settings", "err", encErr)
+		}
+		rs := integrationsettings.Resolve(ctx, pg, enc, tenantID, log)
+		sc.AccessKey = integrationsettings.Prefer(rs.SNDSKey, sc.AccessKey)
+
+		// Overlay the dashboard-managed sndsd tuning (Settings → Delivery & data tuning) over env;
+		// dashboard values win when set. A DB read error is logged and treated as "not set".
+		if t, terr := pg.GetDeliveryTuning(ctx, tenantID); terr != nil {
+			log.Warn("read dashboard delivery tuning; using env config", "err", terr)
+		} else {
+			if t.SNDS.IntervalSecs > 0 {
+				sndsInterval = time.Duration(t.SNDS.IntervalSecs) * time.Second
+			}
+			if t.SNDS.JMRPScanIntervalSecs > 0 {
+				scanInterval = time.Duration(t.SNDS.JMRPScanIntervalSecs) * time.Second
+			}
+			if t.SNDS.JMRPComplaintThreshold > 0 {
+				sc.ComplaintThreshold = t.SNDS.JMRPComplaintThreshold
+			}
+		}
 	}
 
 	client, sndsEnabled := snds.NewClient(sc.AccessKey, sc.DataURL)

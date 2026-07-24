@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -62,6 +63,38 @@ func run() error {
 	}
 	if !encrypted {
 		log.Warn("no encryption key set; channel secrets are read as plaintext")
+	}
+
+	// Overlay the dashboard-managed notifyd tuning (Settings → Delivery & data tuning) over env;
+	// dashboard values win when set. Applied at startup (restart to pick up a change). A DB read
+	// error is logged and treated as "not set" so a transient issue never blanks the env config.
+	if tenantID := strings.TrimSpace(os.Getenv("RELAY_TENANT_ID")); tenantID != "" {
+		if t, terr := pg.GetDeliveryTuning(ctx, tenantID); terr != nil {
+			log.Warn("read dashboard delivery tuning; using env config", "err", terr)
+		} else {
+			nt := t.Notify
+			if nt.PollIntervalSecs > 0 {
+				nc.PollInterval = time.Duration(nt.PollIntervalSecs) * time.Second
+			}
+			if nt.ThrottleSecs > 0 {
+				nc.Throttle = time.Duration(nt.ThrottleSecs) * time.Second
+			}
+			if nt.DedupSecs > 0 {
+				nc.Dedup = time.Duration(nt.DedupSecs) * time.Second
+			}
+			if nt.LookbackSecs > 0 {
+				nc.Lookback = time.Duration(nt.LookbackSecs) * time.Second
+			}
+			if nt.HTTPTimeoutSecs > 0 {
+				nc.HTTPTimeout = time.Duration(nt.HTTPTimeoutSecs) * time.Second
+			}
+			if nt.DashboardURL != "" {
+				nc.DashboardURL = nt.DashboardURL
+			}
+			if nc.Lookback < nc.PollInterval { // preserve LoadConfig's invariant after overlay
+				nc.Lookback = 2 * nc.PollInterval
+			}
+		}
 	}
 
 	w := &worker{
