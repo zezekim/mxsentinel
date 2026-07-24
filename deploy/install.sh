@@ -409,6 +409,9 @@ EOF
 	cp -n /etc/clamav/clamav-milter.conf "/etc/clamav/clamav-milter.conf.bak.$(date +%s)" 2>/dev/null || true
 	cat > /etc/clamav/clamav-milter.conf <<'EOF'
 MilterSocket inet:7357@localhost
+# The Debian/Ubuntu LSB init script (/etc/init.d/clamav-milter) refuses to start without a
+# PidFile directive ("Can not continue with PidFile not set"), so it must be set explicitly.
+PidFile /run/clamav/clamav-milter.pid
 FixStaleSocket true
 User clamav
 ClamdSocket unix:/var/run/clamav/clamd.ctl
