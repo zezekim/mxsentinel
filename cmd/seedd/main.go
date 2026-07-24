@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -79,6 +80,22 @@ func run(intervalOverride time.Duration) error {
 	interval := scfg.Interval
 	if intervalOverride > 0 {
 		interval = intervalOverride
+	}
+
+	// Overlay the dashboard-managed seedd tuning (Settings → Delivery & data tuning) over env;
+	// dashboard values win when set. Applied at startup (restart to pick up a change). A DB read
+	// error is logged and treated as "not set".
+	if tenantID := strings.TrimSpace(os.Getenv("RELAY_TENANT_ID")); tenantID != "" {
+		if t, terr := pg.GetDeliveryTuning(ctx, tenantID); terr != nil {
+			log.Warn("read dashboard delivery tuning; using env config", "err", terr)
+		} else {
+			if t.Seed.IntervalSecs > 0 {
+				interval = time.Duration(t.Seed.IntervalSecs) * time.Second
+			}
+			if t.Seed.CollectWindowSecs > 0 {
+				scfg.CollectWindow = time.Duration(t.Seed.CollectWindowSecs) * time.Second
+			}
+		}
 	}
 
 	w := &worker{

@@ -121,6 +121,22 @@ func run(dirFlag string, scanFlag, sndsFlag time.Duration) error {
 		}
 		rs := integrationsettings.Resolve(ctx, pg, enc, tenantID, log)
 		sc.AccessKey = integrationsettings.Prefer(rs.SNDSKey, sc.AccessKey)
+
+		// Overlay the dashboard-managed sndsd tuning (Settings → Delivery & data tuning) over env;
+		// dashboard values win when set. A DB read error is logged and treated as "not set".
+		if t, terr := pg.GetDeliveryTuning(ctx, tenantID); terr != nil {
+			log.Warn("read dashboard delivery tuning; using env config", "err", terr)
+		} else {
+			if t.SNDS.IntervalSecs > 0 {
+				sndsInterval = time.Duration(t.SNDS.IntervalSecs) * time.Second
+			}
+			if t.SNDS.JMRPScanIntervalSecs > 0 {
+				scanInterval = time.Duration(t.SNDS.JMRPScanIntervalSecs) * time.Second
+			}
+			if t.SNDS.JMRPComplaintThreshold > 0 {
+				sc.ComplaintThreshold = t.SNDS.JMRPComplaintThreshold
+			}
+		}
 	}
 
 	client, sndsEnabled := snds.NewClient(sc.AccessKey, sc.DataURL)

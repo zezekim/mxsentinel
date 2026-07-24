@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -98,6 +99,18 @@ func run(addr, corsOrigin string, rateLimit int) error {
 		log.Warn("MXS_ENCRYPTION_KEY not set — integration credentials stored as plaintext")
 	}
 	apiSrv = apiSrv.WithEncryptor(enc)
+
+	// Overlay the dashboard-managed NL-analytics tool cap (Settings → Delivery & data tuning)
+	// over MXS_NLQUERY_MAX_TOOLS; the dashboard value wins when set. Resolved once at startup
+	// (restart to pick up a change). A read error is logged and treated as "not set".
+	if tenantID := strings.TrimSpace(os.Getenv("RELAY_TENANT_ID")); tenantID != "" {
+		if t, terr := pg.GetDeliveryTuning(ctx, tenantID); terr != nil {
+			log.Warn("read dashboard delivery tuning; using env config", "err", terr)
+		} else if t.NL.MaxTools > 0 {
+			apiSrv = apiSrv.WithNLMaxTools(t.NL.MaxTools)
+			log.Info("nlquery max-tools overridden from dashboard", "max_tools", t.NL.MaxTools)
+		}
+	}
 
 	// Public origin for shareable message-trace links (e.g. https://sentinel.squidix.net).
 	// When unset, the API returns relative /trace/<token> paths and the dashboard composes its

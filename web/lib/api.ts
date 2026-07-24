@@ -688,6 +688,47 @@ export function updateMonitoringTuning(tuning: MonitoringTuning): Promise<Monito
   return apiPut<MonitoringTuningResponse>("/v1/settings/tuning/monitoring", tuning);
 }
 
+// Delivery & data tuning (notifyd / sndsd / seedd / dmarcpulld / nlquery). All fields are
+// non-secret; 0 / blank means "use the daemon default". Changes apply on daemon restart.
+export interface DeliveryTuning {
+  notify: {
+    poll_interval_secs?: number;
+    throttle_secs?: number;
+    dedup_secs?: number;
+    lookback_secs?: number;
+    http_timeout_secs?: number;
+    dashboard_url?: string;
+  };
+  snds: {
+    interval_secs?: number;
+    jmrp_scan_interval_secs?: number;
+    jmrp_complaint_threshold?: number;
+  };
+  seed: {
+    interval_secs?: number;
+    collect_window_secs?: number;
+  };
+  dmarc_pull: {
+    interval_secs?: number;
+    lookback_days?: number;
+  };
+  nl: {
+    max_tools?: number;
+  };
+}
+
+export interface DeliveryTuningResponse {
+  tuning: DeliveryTuning;
+}
+
+export function getDeliveryTuning(): Promise<DeliveryTuningResponse> {
+  return apiGet<DeliveryTuningResponse>("/v1/settings/tuning/delivery");
+}
+
+export function updateDeliveryTuning(v: DeliveryTuning): Promise<DeliveryTuningResponse> {
+  return apiPut<DeliveryTuningResponse>("/v1/settings/tuning/delivery", v);
+}
+
 // ── Top Senders ───────────────────────────────────────────────────────────
 
 export type SenderMetric = "volume" | "spam" | "rejected";

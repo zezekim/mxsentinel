@@ -41,6 +41,9 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 	tenant := s.tenant(r)
 
 	cfg := nlquery.LoadConfig() // reuses MXS_AI_ENDPOINT / MXS_AI_MODEL / MXS_AI_APIKEY
+	if s.nlMaxTools > 0 {       // dashboard-managed override wins over env/default
+		cfg.MaxTools = s.nlMaxTools
+	}
 	client := ai.NewOpenAIClient(cfg.Endpoint, cfg.APIKey, cfg.Model, time.Duration(cfg.TimeoutSecs)*time.Second)
 
 	// *chstore.Store satisfies nlquery.Executor (aggregate-only method subset).

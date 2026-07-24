@@ -7,6 +7,7 @@ import SmarthostSection from "./SmarthostSection";
 import ProvidersSection from "./ProvidersSection";
 import AbuseTuningSection from "./AbuseTuningSection";
 import MonitoringTuningSection from "./MonitoringTuningSection";
+import DeliveryTuningSection from "./DeliveryTuningSection";
 
 const EMPTY: MailSettings = {
   spf_include: "",
@@ -242,6 +243,7 @@ export default function SettingsPage() {
       <ProvidersSection />
       <AbuseTuningSection />
       <MonitoringTuningSection />
+      <DeliveryTuningSection />
     </>
   );
 }

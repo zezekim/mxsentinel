@@ -95,13 +95,29 @@ daemon reads them at startup (dashboard value wins over env). Restart the daemon
 - **Google Postmaster** (fbld): `GOOGLE_POSTMASTER_TOKEN`.
 - **Notification email sender**: `MXS_SMTP_HOST/PORT/USERNAME/PASSWORD/FROM`.
 
+### Delivery & data tuning (shipped): Settings → "Delivery & data tuning (advanced)"
+
+The non-secret tuning knobs for the notification / data-pull daemons are now dashboard-managed
+via `GET/PUT /v1/settings/tuning/delivery` (stored unsealed under the `tuning_delivery` key of
+`tenants.settings`, since none of them are secrets). Each daemon overlays these onto its
+env-based config at startup with precedence **dashboard (DB) > env > default**; a blank/zero
+field means "not set" (keep env/default). Restart the daemon to apply.
+
+- **Alert delivery** (notifyd): `MXS_NOTIFY_POLL_INTERVAL`, `MXS_NOTIFY_THROTTLE`,
+  `MXS_NOTIFY_DEDUP`, `MXS_NOTIFY_LOOKBACK`, `MXS_NOTIFY_HTTP_TIMEOUT`, `MXS_NOTIFY_DASHBOARD_URL`.
+- **Microsoft SNDS/JMRP** (sndsd): `MXS_SNDS_INTERVAL`, `MXS_JMRP_SCAN_INTERVAL`,
+  `MXS_JMRP_COMPLAINT_THRESHOLD`. (`MXS_SNDS_KEY` stays under Providers & keys — it's a secret.)
+- **Seed-list testing** (seedd): `MXS_SEEDTEST_INTERVAL`, `MXS_SEEDTEST_COLLECT_WINDOW`.
+  (`MXS_SEEDTEST_SMTP_*` / `_IMAP_ACCOUNTS` stay in `.env` — credentials.)
+- **DMARC pull** (dmarcpulld): `MXS_DMARCP_INTERVAL`, `MXS_DMARCP_LOOKBACKDAYS`.
+  (`MXS_DMARCP_APIKEY` stays in `.env` — secret.)
+- **NL analytics** (apid): `MXS_NLQUERY_MAX_TOOLS`.
+
 ### Follow-up batches (same pattern: sealed DB config + typed settings API)
 
-- **Seed-list testing:** `MXS_SEEDTEST_SMTP_*`, `MXS_SEEDTEST_IMAP_ACCOUNTS`, windows/intervals.
-- **DMARC pull:** `MXS_DMARCP_BASEURL/APIKEY/INTERVAL/LOOKBACKDAYS/TENANTID`.
-- **Daemon tuning (advanced, low priority):** `AUTHWATCH_*` (12), `MXS_BOUNCE_*`,
-  `MXS_MTASTS_*`, `MXS_PROBE_*`, `MXS_SNDS_INTERVAL/URL`, `MXS_TLSRPT_*`, `MXS_NOTIFY_*`,
-  `MXS_BIMI_*`, `MXS_JMRP_*`, `MXS_NLQUERY_MAX_TOOLS`.
+- **DMARC pull (secret + identity):** `MXS_DMARCP_BASEURL/APIKEY/TENANTID`.
+- **Remaining daemon tuning (advanced, low priority):** `AUTHWATCH_*` (12), `MXS_BOUNCE_*`,
+  `MXS_MTASTS_*`, `MXS_PROBE_*`, `MXS_SNDS_URL`, `MXS_TLSRPT_*`, `MXS_BIMI_*`.
 
 These share one mechanism (below), so later batches are incremental.
 
