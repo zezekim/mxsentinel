@@ -90,9 +90,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /v1/settings/smarthost", s.requireScope(ScopeAdmin, s.handleUpdateSmarthost))
 	mux.HandleFunc("GET /v1/settings/integrations", s.requireScope(ScopeRead, s.handleGetIntegrationSettings))
 	mux.HandleFunc("PUT /v1/settings/integrations", s.requireScope(ScopeAdmin, s.handleUpdateIntegrationSettings))
-	// Dashboard-managed abuse/bounce daemon tuning (non-secret knobs; daemons read at startup).
+	// Dashboard-managed daemon tuning (non-secret knobs; daemons read at startup).
 	mux.HandleFunc("GET /v1/settings/tuning/abuse", s.requireScope(ScopeRead, s.handleGetAbuseTuning))
 	mux.HandleFunc("PUT /v1/settings/tuning/abuse", s.requireScope(ScopeAdmin, s.handleUpdateAbuseTuning))
+	mux.HandleFunc("GET /v1/settings/tuning/monitoring", s.requireScope(ScopeRead, s.handleGetMonitoringTuning))
+	mux.HandleFunc("PUT /v1/settings/tuning/monitoring", s.requireScope(ScopeAdmin, s.handleUpdateMonitoringTuning))
 	// Alert rules & notification channels
 	mux.HandleFunc("GET /v1/alert-rules", s.requireScope(ScopeRead, s.handleListAlertRules))
 	mux.HandleFunc("POST /v1/alert-rules", s.requireScope(ScopeWrite, s.handleCreateAlertRule))

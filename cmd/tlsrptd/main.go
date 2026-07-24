@@ -90,6 +90,9 @@ func run(dirFlag string, intervalFlag time.Duration) error {
 	}
 	defer pg.Close()
 
+	// Dashboard-managed tuning wins over env/flag when the relay tenant is known.
+	applyTuningOverlay(ctx, pg, log, &fcfg)
+
 	ch, err := chstore.New(ctx, cfg.ClickHouse)
 	if err != nil {
 		return err
@@ -151,6 +154,38 @@ func run(dirFlag string, intervalFlag time.Duration) error {
 			w.scanDrop(ctx, fcfg.DropDir)
 		}
 	}
+}
+
+// applyTuningOverlay overlays dashboard-managed monitoring tuning (stored per relay tenant)
+// onto the env-derived MTA-STS / TLS-RPT config. Dashboard values win; unset (0) fields are
+// left as-is. Precedence is dashboard > env > default. A DB read error is logged and treated
+// as "not configured" so the daemon still starts on its env/defaults.
+func applyTuningOverlay(ctx context.Context, pg *pgstore.Store, log *slog.Logger, fcfg *mtasts.Config) {
+	tenant := strings.TrimSpace(os.Getenv("RELAY_TENANT_ID"))
+	if tenant == "" {
+		return
+	}
+	t, err := pg.GetMonitoringTuning(ctx, tenant)
+	if err != nil {
+		log.Warn("read monitoring tuning; using env/defaults", "err", err)
+		return
+	}
+	if t.TLSRPT.IntervalSecs > 0 {
+		fcfg.DropInterval = time.Duration(t.TLSRPT.IntervalSecs) * time.Second
+	}
+	if t.MTASTS.IntervalSecs > 0 {
+		fcfg.PollInterval = time.Duration(t.MTASTS.IntervalSecs) * time.Second
+	}
+	if t.MTASTS.CertWarnDays > 0 {
+		fcfg.CertWarnDays = t.MTASTS.CertWarnDays
+	}
+	if t.MTASTS.CertTimeoutSecs > 0 {
+		fcfg.CertTimeout = time.Duration(t.MTASTS.CertTimeoutSecs) * time.Second
+	}
+	if t.MTASTS.HTTPTimeoutSecs > 0 {
+		fcfg.HTTPTimeout = time.Duration(t.MTASTS.HTTPTimeoutSecs) * time.Second
+	}
+	log.Info("applied dashboard monitoring tuning", "tenant_id", tenant)
 }
 
 type worker struct {

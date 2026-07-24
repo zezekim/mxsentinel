@@ -646,6 +646,48 @@ export function updateAbuseTuning(tuning: AbuseTuning): Promise<AbuseTuningRespo
   return apiPut<AbuseTuningResponse>("/v1/settings/tuning/abuse", tuning);
 }
 
+// ─── Monitoring daemon tuning (advanced) ──────────────────────────────────────
+// Dashboard-managed cadence/timeout knobs for tlsrptd, probed and bimid. A value of
+// 0 (or "" for ehlo_name) means "unset" — the daemon falls back to its env var / default.
+// Changes apply on the next daemon restart.
+
+export interface MonitoringTuning {
+  tlsrpt: {
+    interval_secs: number;
+  };
+  mtasts: {
+    interval_secs: number;
+    cert_warn_days: number;
+    cert_timeout_secs: number;
+    http_timeout_secs: number;
+  };
+  probe: {
+    interval_secs: number;
+    connect_timeout_secs: number;
+    command_timeout_secs: number;
+    cert_warn_days: number;
+    ehlo_name: string;
+    tls_insecure: boolean;
+    check_response: boolean;
+  };
+  bimi: {
+    interval_secs: number;
+    fetch_timeout_secs: number;
+  };
+}
+
+export interface MonitoringTuningResponse {
+  tuning: MonitoringTuning;
+}
+
+export function getMonitoringTuning(): Promise<MonitoringTuningResponse> {
+  return apiGet<MonitoringTuningResponse>("/v1/settings/tuning/monitoring");
+}
+
+export function updateMonitoringTuning(tuning: MonitoringTuning): Promise<MonitoringTuningResponse> {
+  return apiPut<MonitoringTuningResponse>("/v1/settings/tuning/monitoring", tuning);
+}
+
 // ── Top Senders ───────────────────────────────────────────────────────────
 
 export type SenderMetric = "volume" | "spam" | "rejected";
