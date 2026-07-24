@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { getSettings, updateSettings, type MailSettings, type DMARCPolicy } from "@/lib/api";
 import LoadingError from "@/components/LoadingError";
+import SmarthostSection from "./SmarthostSection";
 
 const EMPTY: MailSettings = {
   spf_include: "",
@@ -233,6 +234,8 @@ export default function SettingsPage() {
           )}
         </div>
       )}
+
+      <SmarthostSection />
     </>
   );
 }

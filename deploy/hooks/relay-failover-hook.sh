@@ -49,6 +49,36 @@ ts() { date -Is 2>/dev/null || date; }
 
 command -v postconf >/dev/null 2>&1 || { echo "$(ts) postconf not found — not a Postfix host?"; exit 0; }
 
+# --- Dashboard-managed smarthost credentials + transport (rendered by relayfailoverd) --------
+# When the fallback smarthost is configured in the dashboard, relayfailoverd renders
+# smarthost.sasl ("[host]:port user:pass") and smarthost.transport ("FALLBACK_TRANSPORT=...")
+# next to the domains file. Apply them so credentials + host are managed from the UI, not by
+# hand-editing /etc/postfix. (The one-time `--wire-relay-failover` still defines the
+# relay-mailbaby transport + transport_maps overlay; only creds/host/domains are dynamic.)
+STATE_DIR="$(dirname "${FAILOVER_DOMAINS_FILE:-$SCRIPT_DIR/../failover-state/failover-domains}")"
+RENDERED_SASL="$STATE_DIR/smarthost.sasl"
+RENDERED_TRANSPORT="$STATE_DIR/smarthost.transport"
+LIVE_SASL="/etc/postfix/mxs_failover_sasl"
+SMARTHOST_CHANGED=0
+
+# transport nexthop: the dashboard-rendered value wins over the static env file sourced above.
+[ -f "$RENDERED_TRANSPORT" ] && . "$RENDERED_TRANSPORT"
+
+if [ -f "$RENDERED_SASL" ]; then
+	# Install creds only when they actually changed, then ensure SASL client auth is enabled.
+	if ! cmp -s "$RENDERED_SASL" "$LIVE_SASL" 2>/dev/null; then
+		install -m 0600 "$RENDERED_SASL" "$LIVE_SASL"
+		postmap "$LIVE_SASL"
+		postconf -e \
+			"smtp_sasl_auth_enable = yes" \
+			"smtp_sasl_password_maps = hash:$LIVE_SASL" \
+			"smtp_sasl_security_options = noanonymous" \
+			"smtp_sasl_mechanism_filter = plain, login"
+		SMARTHOST_CHANGED=1
+		echo "$(ts) applied dashboard-managed smarthost credentials -> $LIVE_SASL"
+	fi
+fi
+
 # Read the desired domain set (empty/missing file = no failover = clear the overlay).
 DOMAINS=()
 if [ -f "$FAILOVER_DOMAINS_FILE" ]; then
@@ -84,8 +114,11 @@ if ! printf '%s' "$CUR" | grep -q "hash:$MAP_FILE"; then
 fi
 
 if [ "$NEW_SET" = "$LAST_SET" ]; then
-	# Map content unchanged; nothing to requeue. (postmap above was a cheap self-heal.)
-	systemctl reload postfix 2>/dev/null || postfix reload 2>/dev/null || true
+	# Domain set unchanged. Reload only if the smarthost credentials changed this run (so a
+	# dashboard cred update takes effect); otherwise do nothing (cron runs often).
+	if [ "$SMARTHOST_CHANGED" = "1" ]; then
+		systemctl reload postfix 2>/dev/null || postfix reload 2>/dev/null || true
+	fi
 	exit 0
 fi
 

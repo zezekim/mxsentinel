@@ -86,6 +86,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/smtp-users/{id}", s.requireScope(ScopeAdmin, s.handleDeleteSMTPUser))
 	mux.HandleFunc("GET /v1/settings", s.requireScope(ScopeRead, s.handleGetSettings))
 	mux.HandleFunc("PUT /v1/settings", s.requireScope(ScopeAdmin, s.handleUpdateSettings))
+	mux.HandleFunc("GET /v1/settings/smarthost", s.requireScope(ScopeRead, s.handleGetSmarthost))
+	mux.HandleFunc("PUT /v1/settings/smarthost", s.requireScope(ScopeAdmin, s.handleUpdateSmarthost))
 	// Alert rules & notification channels
 	mux.HandleFunc("GET /v1/alert-rules", s.requireScope(ScopeRead, s.handleListAlertRules))
 	mux.HandleFunc("POST /v1/alert-rules", s.requireScope(ScopeWrite, s.handleCreateAlertRule))

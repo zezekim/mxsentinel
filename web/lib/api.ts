@@ -538,6 +538,36 @@ export function updateSettings(settings: MailSettings): Promise<SettingsResponse
   return apiPut<SettingsResponse>("/v1/settings", settings);
 }
 
+export type SmarthostMode = "always" | "on_throttle";
+
+export interface Smarthost {
+  enabled: boolean;
+  host: string;
+  port: number;
+  username: string;
+  password?: string; // write-only; send to set/change, omit/blank to keep the stored one
+  password_set: boolean; // read-only
+  mode: SmarthostMode;
+  domains: string[];
+  trip_rate?: number;
+  window_secs?: number;
+  hold_secs?: number;
+  min_attempts?: number;
+  min_defers?: number;
+}
+
+export interface SmarthostResponse {
+  smarthost: Smarthost;
+}
+
+export function getSmarthost(): Promise<SmarthostResponse> {
+  return apiGet<SmarthostResponse>("/v1/settings/smarthost");
+}
+
+export function updateSmarthost(smarthost: Smarthost): Promise<SmarthostResponse> {
+  return apiPut<SmarthostResponse>("/v1/settings/smarthost", smarthost);
+}
+
 // ── Top Senders ───────────────────────────────────────────────────────────
 
 export type SenderMetric = "volume" | "spam" | "rejected";
