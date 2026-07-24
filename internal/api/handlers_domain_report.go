@@ -48,6 +48,31 @@ func (s *Server) handleDomainReport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"report": rep, "text": rep.Text()})
 }
 
+// GET /v1/reports/summary?since=&until=&top=
+//
+// Tenant-wide deliverability overview for a period: overall counts + rates, per-provider
+// breakdown, and the top sending domains by volume. Designed to drop into an external admin
+// report (e.g. a WHMCS report page) as a single JSON call. since/until default to last 30 days.
+func (s *Server) handleReportsSummary(w http.ResponseWriter, r *http.Request) {
+	tenantID := s.tenant(r)
+	now := time.Now().UTC()
+	until := parseReportTime(r.URL.Query().Get("until"), now)
+	since := parseReportTime(r.URL.Query().Get("since"), until.Add(-30*24*time.Hour))
+	if !since.Before(until) {
+		writeError(w, http.StatusBadRequest, "bad_request", "since must be before until")
+		return
+	}
+	topN := parseIntParam(r, "top", 15, 100)
+
+	rep, err := report.BuildSummary(r.Context(), s.ch, s.pg, tenantID, since, until, topN)
+	if err != nil {
+		s.log.Error("build summary report", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "failed to build summary")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"summary": rep})
+}
+
 // parseReportTime accepts RFC3339 or a bare YYYY-MM-DD date; returns def on empty/invalid.
 func parseReportTime(v string, def time.Time) time.Time {
 	v = strings.TrimSpace(v)
