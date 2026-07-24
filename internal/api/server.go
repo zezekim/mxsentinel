@@ -123,6 +123,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/warmup/{id}", s.requireScope(ScopeAdmin, s.handleDeleteWarmupPlan))
 	// Scheduled reports
 	mux.HandleFunc("GET /v1/reports/domain", s.requireScope(ScopeRead, s.handleDomainReport))
+	mux.HandleFunc("GET /v1/reports/summary", s.requireScope(ScopeRead, s.handleReportsSummary))
 	mux.HandleFunc("GET /v1/reports", s.requireScope(ScopeRead, s.handleListReports))
 	mux.HandleFunc("POST /v1/reports", s.requireScope(ScopeWrite, s.handleCreateReport))
 	mux.HandleFunc("PUT /v1/reports/{id}", s.requireScope(ScopeWrite, s.handleUpdateReport))
