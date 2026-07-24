@@ -533,17 +533,24 @@ provision_relay_failover() {
 	printf 'FALLBACK_TRANSPORT=%s\n' "$fallback_transport" > "$hookenv"
 	chmod 644 "$hookenv"
 
-	# 2) SASL creds for the fallback (placeholder until you have a mail.baby account).
-	if [ ! -f "$sasl_file" ]; then
-		if [ -n "$host" ] && [ -n "$user" ]; then
-			printf '[%s] %s:%s\n' "$host" "$user" "$pass" > "$sasl_file"
-			info "Wrote fallback SASL creds to $sasl_file"
-		else
-			printf '# [smarthost.example:587] username:password  <-- fill in your mail.baby creds, then: postmap %s && systemctl reload postfix\n' "$sasl_file" > "$sasl_file"
-			warn "No fallback creds given — wrote a PLACEHOLDER to $sasl_file. Failover will NOT deliver until you fill it in."
-		fi
+	# 2) SASL creds for the fallback. When creds are supplied we ALWAYS (re)write the file so
+	#    re-running the wizard fixes a bad/old entry; the placeholder is only written once, when
+	#    no file exists yet.
+	#
+	#    The SASL lookup key MUST match the transport nexthop format exactly: the nexthop is
+	#    relay-mailbaby:[host]:port, so the key is [host]:port — brackets on the HOST only, port
+	#    OUTSIDE. Writing "[host:port]" (port inside the brackets) makes Postfix skip the
+	#    credential and SASL auth silently fails. $h/$p were split from $host above.
+	if [ -n "$host" ] && [ -n "$user" ]; then
+		printf '[%s]:%s %s:%s\n' "$h" "$p" "$user" "$pass" > "$sasl_file"
 		chmod 600 "$sasl_file"
 		postmap "$sasl_file" 2>/dev/null || true
+		info "Wrote fallback SASL creds to $sasl_file (key [$h]:$p)"
+	elif [ ! -f "$sasl_file" ]; then
+		printf '# [smarthost.example]:587 username:password  <-- key is [host]:port (port OUTSIDE the brackets). Fill in, then: postmap %s && systemctl reload postfix\n' "$sasl_file" > "$sasl_file"
+		chmod 600 "$sasl_file"
+		postmap "$sasl_file" 2>/dev/null || true
+		warn "No fallback creds given — wrote a PLACEHOLDER to $sasl_file. Failover will NOT deliver until you fill it in."
 	fi
 	postconf -e \
 		"smtp_sasl_auth_enable = yes" \
