@@ -113,13 +113,19 @@ field means "not set" (keep env/default). Restart the daemon to apply.
   (`MXS_DMARCP_APIKEY` stays in `.env` — secret.)
 - **NL analytics** (apid): `MXS_NLQUERY_MAX_TOOLS`.
 
-### Follow-up batches (same pattern: sealed DB config + typed settings API)
+Two more tuning groups ship alongside the delivery one above, same mechanism and precedence:
 
-- **DMARC pull (secret + identity):** `MXS_DMARCP_BASEURL/APIKEY/TENANTID`.
-- **Remaining daemon tuning (advanced, low priority):** `AUTHWATCH_*` (12), `MXS_BOUNCE_*`,
-  `MXS_MTASTS_*`, `MXS_PROBE_*`, `MXS_SNDS_URL`, `MXS_TLSRPT_*`, `MXS_BIMI_*`.
+- **Abuse & bounce** — `GET/PUT /v1/settings/tuning/abuse` (`tuning_abuse` key), for authwatchd
+  (`AUTHWATCH_*`) and bounced (`MXS_BOUNCE_*`). Settings → "Abuse & bounce tuning (advanced)".
+- **Monitoring** — `GET/PUT /v1/settings/tuning/monitoring` (`tuning_monitoring` key), for
+  tlsrptd/MTA-STS (`MXS_TLSRPT_*`, `MXS_MTASTS_*`), probed (`MXS_PROBE_*`, non-topology), and
+  bimid (`MXS_BIMI_*`). Settings → "Monitoring tuning (advanced)".
 
-These share one mechanism (below), so later batches are incremental.
+### Follow-up (remaining — mostly secret creds not yet in the UI)
+
+- **Seed-list SMTP/IMAP creds:** `MXS_SEEDTEST_SMTP_*`, `MXS_SEEDTEST_IMAP_ACCOUNTS` (secret).
+- **DMARC pull endpoint/key:** `MXS_DMARCP_BASEURL/APIKEY/TENANTID` (`APIKEY` secret).
+- **Probe endpoint topology:** `MXS_PROBE_ENDPOINTS/PORTS/HOST` (deployment layout; stays env).
 
 ---
 

@@ -93,9 +93,9 @@ func (s *Server) handleGetMonitoringTuning(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]any{"tuning": toMonitoringTuningJSON(m)})
 }
 
-// secsField validates a "0 = unset, otherwise 1..max" seconds knob.
-func validTuningRange(v, max int) bool {
-	return v == 0 || (v >= 1 && v <= max)
+// secsField validates a "0 = unset, otherwise 1..maxVal" seconds knob.
+func validTuningRange(v, maxVal int) bool {
+	return v == 0 || (v >= 1 && v <= maxVal)
 }
 
 // handleUpdateMonitoringTuning replaces the tenant's monitoring tuning (admin scope).
