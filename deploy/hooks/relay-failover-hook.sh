@@ -79,7 +79,18 @@ if [ -f "$RENDERED_SASL" ]; then
 	fi
 fi
 
-# Read the desired domain set (empty/missing file = no failover = clear the overlay).
+# FAIL-SAFE: a MISSING state file means relayfailoverd isn't managing this overlay (not
+# deployed, not configured, wrong bind-mount, or a permission error writing the file). In that
+# case leave the overlay exactly as-is rather than clearing it — clearing a working hand- or
+# previously-populated overlay is how consumer-Outlook routing silently broke. To DISABLE
+# failover, write an EMPTY state file (a deliberate, present-but-empty signal), which the
+# block below treats as "clear".
+if [ ! -f "$FAILOVER_DOMAINS_FILE" ]; then
+	echo "$(ts) state file $FAILOVER_DOMAINS_FILE absent — relayfailoverd not writing it; leaving overlay unchanged"
+	exit 0
+fi
+
+# Read the desired domain set (a present-but-empty file = failover disabled = clear the overlay).
 DOMAINS=()
 if [ -f "$FAILOVER_DOMAINS_FILE" ]; then
 	# Accept only plausible domain lines; lowercase; de-dupe; sort for a stable comparison.
