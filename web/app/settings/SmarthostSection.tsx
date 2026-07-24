@@ -74,8 +74,8 @@ export default function SmarthostSection() {
   if (error) return <p className="section-desc" style={{ color: "var(--danger, #c0392b)" }}>{error}</p>;
 
   return (
-    <form onSubmit={handleSubmit} style={{ marginTop: "2rem" }}>
-      <fieldset>
+    <form onSubmit={handleSubmit} className="settings-form">
+      <fieldset className="settings-group">
         <legend>Outbound fallback smarthost</legend>
         <p className="section-desc">
           Route mail for specific recipient domains through a managed relay (e.g. mail.baby) when your

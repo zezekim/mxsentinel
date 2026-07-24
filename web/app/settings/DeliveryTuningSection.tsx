@@ -80,8 +80,8 @@ export default function DeliveryTuningSection() {
   if (error) return <p className="section-desc" style={{ color: "var(--danger, #c0392b)" }}>{error}</p>;
 
   return (
-    <form onSubmit={handleSubmit} style={{ marginTop: "2rem" }}>
-      <fieldset>
+    <form onSubmit={handleSubmit} className="settings-form" style={{ marginTop: "2.5rem" }}>
+      <fieldset className="settings-group">
         <legend>Delivery &amp; data tuning (advanced)</legend>
         <p className="section-desc">
           Poll/scan intervals, throttle/dedup windows and thresholds for the notification and
