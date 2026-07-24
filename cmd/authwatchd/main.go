@@ -28,6 +28,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -92,6 +93,19 @@ func run() error {
 
 	dcfg := configFromEnv(log)
 	autolock := envBool("AUTHWATCH_AUTOLOCK", false)
+
+	// Overlay dashboard-managed tuning (Postgres) over the env-loaded config. Precedence is
+	// DASHBOARD > env > default: a value set via the Settings page wins, an unset (zero) value
+	// leaves the env/default in place, and a DB read error is treated as "unset" so we never
+	// blank a working env-configured detector. Scoped to RELAY_TENANT_ID (the single tenant this
+	// relay's daemons run for); with no tenant set there is nothing to look up.
+	if tenantID := strings.TrimSpace(os.Getenv("RELAY_TENANT_ID")); tenantID != "" {
+		if t, err := pg.GetAbuseTuning(ctx, tenantID); err != nil {
+			log.Warn("abuse tuning: read failed; using env/default", "tenant_id", tenantID, "err", err)
+		} else {
+			applyAuthwatchTuning(&dcfg, &autolock, t.Authwatch, log)
+		}
+	}
 
 	w := &worker{
 		log:      log,
@@ -234,6 +248,71 @@ func configFromEnv(log *slog.Logger) authwatch.Config {
 	c.OffHoursWeight = envFloat("AUTHWATCH_OFFHOURS_WEIGHT", c.OffHoursWeight, log)
 	c.Threshold = envFloat("AUTHWATCH_THRESHOLD", c.Threshold, log)
 	return c
+}
+
+// applyAuthwatchTuning overlays non-zero dashboard-managed values onto the detector config (and
+// the opt-in auto-lock switch). A zero value means "unset" — left untouched so the env/default
+// stands. Durations arrive as integer seconds. It logs how many fields it changed for
+// auditability at startup.
+func applyAuthwatchTuning(c *authwatch.Config, autolock *bool, t pgstore.AuthwatchTuning, log *slog.Logger) {
+	n := 0
+	if t.Threshold > 0 {
+		c.Threshold = t.Threshold
+		n++
+	}
+	if t.WindowSecs > 0 {
+		c.Window = time.Duration(t.WindowSecs) * time.Second
+		n++
+	}
+	if t.CooldownSecs > 0 {
+		c.Cooldown = time.Duration(t.CooldownSecs) * time.Second
+		n++
+	}
+	if t.MinVolume > 0 {
+		c.MinVolume = t.MinVolume
+		n++
+	}
+	if t.DistinctRcpt > 0 {
+		c.DistinctRcptThreshold = t.DistinctRcpt
+		n++
+	}
+	if t.BounceRate > 0 {
+		c.BounceRate = t.BounceRate
+		n++
+	}
+	if t.VolumeFactor > 0 {
+		c.VolumeFactor = t.VolumeFactor
+		n++
+	}
+	if t.VolumeFloor > 0 {
+		c.VolumeFloor = t.VolumeFloor
+		n++
+	}
+	if t.OffHoursStart > 0 {
+		c.OffHoursStart = t.OffHoursStart
+		n++
+	}
+	if t.OffHoursEnd > 0 {
+		c.OffHoursEnd = t.OffHoursEnd
+		n++
+	}
+	if t.OffHoursRate > 0 {
+		c.OffHoursRate = t.OffHoursRate
+		n++
+	}
+	if t.OffHoursWeight > 0 {
+		c.OffHoursWeight = t.OffHoursWeight
+		n++
+	}
+	// Auto-lock is a bool where false = "unset" per the group convention: the dashboard can turn
+	// it ON but not force it OFF (leave the checkbox unchecked to defer to AUTHWATCH_AUTOLOCK).
+	if t.Autolock {
+		*autolock = true
+		n++
+	}
+	if n > 0 {
+		log.Info("applied dashboard abuse tuning (authwatch)", "fields", n)
+	}
 }
 
 func envBool(key string, def bool) bool {

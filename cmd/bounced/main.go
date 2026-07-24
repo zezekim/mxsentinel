@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 
@@ -70,6 +71,23 @@ func run(intervalOverride time.Duration) error {
 		return err
 	}
 	defer pg.Close()
+
+	// Overlay dashboard-managed tuning (Postgres) over the env-loaded config. Precedence is
+	// DASHBOARD > env > default: a value set via the Settings page wins, an unset (zero) value
+	// leaves the env/default in place, and a DB read error is treated as "unset" so we never
+	// blank a working env-configured scanner. Scoped to RELAY_TENANT_ID (the single tenant this
+	// relay's daemons run for). The explicit -interval flag (below) is re-applied afterwards so a
+	// deliberate CLI override still wins over the dashboard for one-off debugging.
+	if tenantID := strings.TrimSpace(os.Getenv("RELAY_TENANT_ID")); tenantID != "" {
+		if t, err := pg.GetAbuseTuning(ctx, tenantID); err != nil {
+			log.Warn("abuse tuning: read failed; using env/default", "tenant_id", tenantID, "err", err)
+		} else {
+			applyBounceTuning(&bcfg, t.Bounce, log)
+		}
+	}
+	if intervalOverride > 0 {
+		bcfg.Interval = intervalOverride
+	}
 
 	var ch *chstore.Store
 	if err := obs.Retry(ctx, log, "clickhouse", 20, 3*time.Second, func() (e error) {
@@ -206,4 +224,26 @@ func (w *worker) writeSuppression(ctx context.Context, suppress map[string]suppr
 		}
 	}
 	return added
+}
+
+// applyBounceTuning overlays non-zero dashboard-managed values onto the bounced config. A zero
+// value means "unset" — left untouched so the env/default stands. Interval/Lookback arrive as
+// integer seconds. It logs how many fields it changed for auditability at startup.
+func applyBounceTuning(c *bounce.Config, t pgstore.BounceTuning, log *slog.Logger) {
+	n := 0
+	if t.IntervalSecs > 0 {
+		c.Interval = time.Duration(t.IntervalSecs) * time.Second
+		n++
+	}
+	if t.LookbackSecs > 0 {
+		c.Lookback = time.Duration(t.LookbackSecs) * time.Second
+		n++
+	}
+	if t.MaxRows > 0 {
+		c.MaxRows = t.MaxRows
+		n++
+	}
+	if n > 0 {
+		log.Info("applied dashboard abuse tuning (bounce)", "fields", n)
+	}
 }

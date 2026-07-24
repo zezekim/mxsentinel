@@ -602,6 +602,50 @@ export function updateIntegrationSettings(v: IntegrationSettings): Promise<Integ
   return apiPut<IntegrationSettingsResponse>("/v1/settings/integrations", v);
 }
 
+// ── Abuse & bounce daemon tuning ──────────────────────────────────────────
+// Non-secret runtime knobs for authwatchd / bounced. Every value is optional:
+// 0 / false means "unset — the daemon keeps its env var / built-in default".
+// Durations are integer seconds. Changes apply on daemon restart.
+
+export interface AuthwatchTuning {
+  threshold: number;
+  window_secs: number;
+  cooldown_secs: number;
+  min_volume: number;
+  distinct_rcpt: number;
+  bounce_rate: number;
+  volume_factor: number;
+  volume_floor: number;
+  offhours_start: number;
+  offhours_end: number;
+  offhours_rate: number;
+  offhours_weight: number;
+  autolock: boolean;
+}
+
+export interface BounceTuning {
+  interval_secs: number;
+  lookback_secs: number;
+  max_rows: number;
+}
+
+export interface AbuseTuning {
+  authwatch: AuthwatchTuning;
+  bounce: BounceTuning;
+}
+
+export interface AbuseTuningResponse {
+  tuning_abuse: AbuseTuning;
+}
+
+export function getAbuseTuning(): Promise<AbuseTuningResponse> {
+  return apiGet<AbuseTuningResponse>("/v1/settings/tuning/abuse");
+}
+
+export function updateAbuseTuning(tuning: AbuseTuning): Promise<AbuseTuningResponse> {
+  return apiPut<AbuseTuningResponse>("/v1/settings/tuning/abuse", tuning);
+}
+
 // ── Top Senders ───────────────────────────────────────────────────────────
 
 export type SenderMetric = "volume" | "spam" | "rejected";

@@ -5,6 +5,7 @@ import { getSettings, updateSettings, type MailSettings, type DMARCPolicy } from
 import LoadingError from "@/components/LoadingError";
 import SmarthostSection from "./SmarthostSection";
 import ProvidersSection from "./ProvidersSection";
+import AbuseTuningSection from "./AbuseTuningSection";
 
 const EMPTY: MailSettings = {
   spf_include: "",
@@ -238,6 +239,7 @@ export default function SettingsPage() {
 
       <SmarthostSection />
       <ProvidersSection />
+      <AbuseTuningSection />
     </>
   );
 }
