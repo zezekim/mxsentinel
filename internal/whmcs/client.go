@@ -56,6 +56,9 @@ type AccountMetrics struct {
 	Total          int64
 	PeriodStart    time.Time
 	PeriodEnd      time.Time
+	// ReportText, when set, is a full deliverability report block added to the WHMCS client as
+	// a note (in addition to the billable item) — a copy-paste-ready per-client summary.
+	ReportText string
 }
 
 // Ping verifies credentials by calling GetClients with limit=1.
@@ -209,9 +212,38 @@ func (c *Client) PushMetrics(ctx context.Context, metrics []AccountMetrics) (int
 		if r, ok := resp["result"].(string); ok && r == "success" {
 			updated++
 		}
+
+		// Attach the full deliverability report as a client note (copy-paste-ready). Best-effort:
+		// a note failure must not abort the whole push.
+		if m.ReportText != "" {
+			if nerr := c.AddClientNote(ctx, client.ID, m.ReportText); nerr != nil {
+				lastErr = nerr
+			}
+		}
 	}
 
 	return updated, lastErr
+}
+
+// AddClientNote appends a note to a WHMCS client record (the "Notes" tab). Used to attach the
+// per-period deliverability report block so it's copy-paste-ready from inside WHMCS.
+func (c *Client) AddClientNote(ctx context.Context, clientID int, note string) error {
+	params := url.Values{
+		"userid": {fmt.Sprintf("%d", clientID)},
+		"notes":  {note},
+		"sticky": {"false"},
+	}
+	resp, err := c.post(ctx, "AddClientNote", params)
+	if err != nil {
+		return err
+	}
+	if r, ok := resp["result"].(string); ok && r != "success" {
+		if msg, _ := resp["message"].(string); msg != "" {
+			return fmt.Errorf("AddClientNote: %s", msg)
+		}
+		return fmt.Errorf("AddClientNote: unexpected result %q", r)
+	}
+	return nil
 }
 
 // post sends a POST request to the WHMCS API and returns the decoded response.

@@ -22,6 +22,7 @@ import (
 	cpanelpkg "github.com/zezekim/mxsentinel/internal/cpanel"
 	"github.com/zezekim/mxsentinel/internal/crypto"
 	"github.com/zezekim/mxsentinel/internal/obs"
+	"github.com/zezekim/mxsentinel/internal/report"
 	chstore "github.com/zezekim/mxsentinel/internal/store/clickhouse"
 	pgstore "github.com/zezekim/mxsentinel/internal/store/postgres"
 	whmpkg "github.com/zezekim/mxsentinel/internal/whmcs"
@@ -252,6 +253,18 @@ func (s *syncer) pushWhmcsConnection(ctx context.Context, conn pgstore.WhmcsConn
 			}
 		}
 
+		// Build the full deliverability report block for this account's primary domain, attached
+		// to the WHMCS client as a copy-paste-ready note. Best-effort — the billable-item push
+		// still happens if the report can't be built.
+		var reportText string
+		if primaryDomain != "" {
+			if rep, rerr := report.Build(ctx, s.ch, s.pg, conn.TenantID, primaryDomain, periodStart, periodEnd); rerr == nil {
+				reportText = rep.Text()
+			} else {
+				s.log.Warn("build deliverability report for whmcs note", "domain", primaryDomain, "err", rerr)
+			}
+		}
+
 		accountMetrics = append(accountMetrics, whmpkg.AccountMetrics{
 			CpanelUsername: username,
 			PrimaryDomain:  primaryDomain,
@@ -263,6 +276,7 @@ func (s *syncer) pushWhmcsConnection(ctx context.Context, conn pgstore.WhmcsConn
 			Total:          int64(agg.Total),
 			PeriodStart:    periodStart,
 			PeriodEnd:      periodEnd,
+			ReportText:     reportText,
 		})
 	}
 
