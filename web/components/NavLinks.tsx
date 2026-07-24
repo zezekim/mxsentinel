@@ -74,6 +74,7 @@ const navSections = [
     label: "Reporting",
     links: [
       { href: "/reports", label: "Reports", icon: Icons.calendar },
+      { href: "/domain-report", label: "Domain Report", icon: Icons.fileCheck },
       { href: "/ask", label: "Ask Logs", icon: Icons.chartBar },
     ],
   },

@@ -1056,3 +1056,48 @@ export interface WhmcsPushLogEntry {
   period_start: string;
   period_end: string;
 }
+
+// ── Ad-hoc per-domain deliverability report ─────────────────────────────────
+export interface ReportCounts {
+  delivered: number;
+  deferred: number;
+  bounced: number;
+  rejected: number;
+  total: number;
+}
+export interface ReportProviderRow extends ReportCounts {
+  provider: string;
+}
+export interface ReportScore {
+  score: number;
+  grade: string;
+  coverage: number;
+  computed_at: string;
+}
+export interface ReportPlacementRow {
+  provider: string;
+  inbox: number;
+  spam: number;
+  missing: number;
+  total: number;
+}
+export interface DomainReport {
+  domain: string;
+  period_start: string;
+  period_end: string;
+  core: ReportCounts;
+  providers: ReportProviderRow[] | null;
+  score?: ReportScore;
+  placement?: ReportPlacementRow[] | null;
+}
+export interface DomainReportResponse {
+  report: DomainReport;
+  text: string;
+}
+
+export function getDomainReport(domain: string, since?: string, until?: string): Promise<DomainReportResponse> {
+  const q = new URLSearchParams({ domain });
+  if (since) q.set("since", since);
+  if (until) q.set("until", until);
+  return apiGet<DomainReportResponse>(`/v1/reports/domain?${q.toString()}`);
+}
