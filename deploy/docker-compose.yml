@@ -247,6 +247,19 @@ services:
     depends_on:
       migrate: {condition: service_completed_successfully}
 
+  # cPanel/WHM account sync + WHMCS metrics push. Syncs accounts/domains from the cPanel
+  # servers configured in the dashboard (Integrations → cPanel / WHMCS) and, per WHMCS
+  # connection, pushes each client a per-period deliverability summary — a zero-amount billable
+  # item plus a copy-paste report note. Connections/creds live in Postgres (sealed); needs the
+  # encryption key from the shared app-env to open them.
+  cpaneld:
+    <<: *app
+    command: ["/usr/local/bin/cpaneld"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      postgres: {condition: service_healthy}
+      clickhouse: {condition: service_healthy}
+
   # RBL/DNSBL self-monitor for the relay's own egress IPs. On a ticker (RBL_INTERVAL, default
   # 15m) it checks every RELAY_EGRESS_IPS entry (falls back to RELAY_NODE_IP) against each
   # RBL_ZONES zone, upserts ip_blocklist_status, opens a critical incident on a clean->listed
