@@ -42,6 +42,12 @@ x-app-env: &app-env
   # Comma-separated; falls back to RELAY_NODE_IP (single IP) when unset.
   RELAY_EGRESS_IPS: "${RELAY_EGRESS_IPS:-}"
   RELAY_NODE_IP: "${RELAY_NODE_IP:-}"
+  # The tenant whose dashboard-managed settings the daemons read (smarthost, provider keys,
+  # tuning). Without it, those daemons fall back to env only. MXS_ENCRYPTION_KEY unseals the
+  # secret fields (AI key, SNDS key, Postmaster token, smarthost/notify passwords); empty =
+  # passthrough (values read as plaintext), matching apid.
+  RELAY_TENANT_ID: "${RELAY_TENANT_ID:-}"
+  MXS_ENCRYPTION_KEY: "${MXS_ENCRYPTION_KEY:-}"
   # DMARC pull integration (external receiver)
   MXS_DMARCP_BASEURL: "${MXS_DMARCP_BASEURL:-}"
   MXS_DMARCP_APIKEY: "${MXS_DMARCP_APIKEY:-}"
