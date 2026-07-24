@@ -102,8 +102,8 @@ export default function ProvidersSection() {
   if (error) return <p className="section-desc" style={{ color: "var(--danger, #c0392b)" }}>{error}</p>;
 
   return (
-    <form onSubmit={handleSubmit} style={{ marginTop: "2rem" }}>
-      <fieldset>
+    <form onSubmit={handleSubmit} className="settings-form">
+      <fieldset className="settings-group">
         <legend>Providers &amp; keys</legend>
         <p className="section-desc">
           API keys and endpoints for the diagnostics LLM and deliverability data sources. Secrets are

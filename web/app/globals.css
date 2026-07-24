@@ -992,6 +992,91 @@ button[class=""]:disabled {
   max-width: 600px;
 }
 
+/* Settings tabs */
+.settings-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--border);
+  margin: 0.75rem 0 1.5rem;
+}
+.settings-tab {
+  appearance: none;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 0.6rem 0.9rem;
+  margin-bottom: -1px;
+  font-family: var(--font);
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.settings-tab:hover {
+  color: var(--text-1);
+}
+.settings-tab.active {
+  color: var(--indigo);
+  border-bottom-color: var(--indigo);
+}
+.settings-panel {
+  max-width: 640px;
+}
+
+/* Subsection heading inside a settings section (Providers, tuning) */
+.subhead {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-2);
+  margin: 1.5rem 0 0.75rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+.subhead:first-of-type {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0.25rem;
+}
+
+/* Link-styled button (e.g. "Show advanced tuning", "Use Outlook set") */
+.linklike {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--indigo);
+  cursor: pointer;
+  text-decoration: underline;
+}
+.linklike:hover {
+  text-decoration: none;
+}
+
+/* Checkbox + label row */
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--text-1);
+  margin-bottom: 1rem;
+  cursor: pointer;
+}
+.check-row input {
+  width: auto;
+}
+
+/* Compact grid for advanced numeric tuning inputs */
+.advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.5rem 1rem;
+}
+
 .settings-group {
   background: var(--surface);
   border: 1px solid var(--border);
