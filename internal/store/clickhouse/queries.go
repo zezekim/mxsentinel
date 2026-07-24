@@ -2,6 +2,8 @@ package clickhouse
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -201,6 +203,76 @@ func (s *Store) QueryMessageTrace(ctx context.Context, tenantID, queueID string)
 		return MessageTrace{}, fmt.Errorf("query message trace: %w", err)
 	}
 	return trace, nil
+}
+
+// MessageEnvelope is the collapsed one-row summary of a message for the drill-down "Envelope"
+// tab: originating IP / SASL user / envelope + auth results taken from the received event, and
+// the final outcome (event type, SMTP code, response) taken from the latest event.
+type MessageEnvelope struct {
+	QueueID         string    `json:"queue_id"`
+	MessageID       string    `json:"message_id"`
+	Queued          time.Time `json:"queued"`
+	LastEvent       time.Time `json:"last_event"`
+	SourceIP        string    `json:"source_ip"`
+	SASLUsername    string    `json:"sasl_username"`
+	EnvelopeFrom    string    `json:"envelope_from"`
+	FromDomain      string    `json:"from_domain"`
+	RecipientDomain string    `json:"recipient_domain"`
+	Provider        string    `json:"provider"`
+	SPFResult       string    `json:"spf_result"`
+	DKIMResult      string    `json:"dkim_result"`
+	DMARCResult     string    `json:"dmarc_result"`
+	TLSUsed         uint8     `json:"tls_used"`
+	TLSVersion      string    `json:"tls_version"`
+	SizeBytes       uint32    `json:"size_bytes"`
+	Outcome         string    `json:"outcome"`
+	SMTPCode        uint16    `json:"smtp_code"`
+	EnhancedStatus  string    `json:"enhanced_status"`
+	ResponseText    string    `json:"response_text"`
+}
+
+// QueryMessageEnvelope collapses all smtp_events for one message (tenant_id + queue_id) into a
+// single envelope summary. ok=false means the message is unknown for that tenant.
+func (s *Store) QueryMessageEnvelope(ctx context.Context, tenantID, queueID string) (MessageEnvelope, bool, error) {
+	const q = `SELECT
+		min(event_time)                                                  AS queued,
+		max(event_time)                                                  AS last_event,
+		anyIf(toString(source_ip), event_type = 'received')              AS source_ip,
+		anyIf(sasl_username, sasl_username != '')                        AS sasl_username,
+		anyIf(envelope_from, envelope_from != '')                        AS envelope_from,
+		anyIf(from_domain, from_domain != '')                            AS from_domain,
+		anyIf(recipient_domain, recipient_domain != '')                  AS recipient_domain,
+		anyIf(provider, provider != '')                                  AS provider,
+		anyIf(toString(spf_result), event_type = 'received')             AS spf_result,
+		anyIf(toString(dkim_result), event_type = 'received')            AS dkim_result,
+		anyIf(toString(dmarc_result), event_type = 'received')           AS dmarc_result,
+		max(tls_used)                                                    AS tls_used,
+		anyIf(tls_version, tls_version != '')                            AS tls_version,
+		max(size_bytes)                                                  AS size_bytes,
+		anyIf(message_id, message_id != '')                              AS message_id,
+		argMax(toString(event_type), event_time)                         AS outcome,
+		argMax(smtp_code, event_time)                                    AS smtp_code,
+		argMax(enhanced_status, event_time)                              AS enhanced_status,
+		argMax(response_text, event_time)                                AS response_text
+	FROM smtp_events
+	WHERE tenant_id = ? AND queue_id = ?
+	HAVING count() > 0`
+
+	row := s.conn.QueryRow(ctx, q, tenantID, queueID)
+	var e MessageEnvelope
+	e.QueueID = queueID
+	if err := row.Scan(
+		&e.Queued, &e.LastEvent, &e.SourceIP, &e.SASLUsername, &e.EnvelopeFrom, &e.FromDomain,
+		&e.RecipientDomain, &e.Provider, &e.SPFResult, &e.DKIMResult, &e.DMARCResult,
+		&e.TLSUsed, &e.TLSVersion, &e.SizeBytes, &e.MessageID,
+		&e.Outcome, &e.SMTPCode, &e.EnhancedStatus, &e.ResponseText,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return MessageEnvelope{}, false, nil
+		}
+		return MessageEnvelope{}, false, fmt.Errorf("query message envelope: %w", err)
+	}
+	return e, true, nil
 }
 
 // DMARCAlignment holds aggregate alignment counts for a domain.

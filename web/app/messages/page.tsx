@@ -134,6 +134,17 @@ function DetailRow({ m, cols }: { m: Message; cols: number }) {
           )}
         </div>
         <div style={{ marginTop: "0.75rem", paddingTop: "0.75rem", borderTop: "1px solid #eee" }}>
+          {m.queue_id && (
+            <div style={{ marginBottom: "0.6rem" }}>
+              <a
+                href={`/messages/${encodeURIComponent(m.queue_id)}`}
+                style={{ fontSize: "0.8rem", fontWeight: 600 }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                Full report → (envelope · spam · headers · timeline)
+              </a>
+            </div>
+          )}
           <div style={{ fontSize: "0.72rem", color: "#888", marginBottom: "0.35rem" }}>
             Share a client-facing status link for this message:
           </div>
