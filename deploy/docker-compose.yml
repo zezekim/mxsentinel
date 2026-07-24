@@ -269,7 +269,7 @@ services:
     volumes:
       # Host dir holding the healthy-IPs file the host-side rotation hook reads. Writable so
       # rbld can update it atomically (temp file + rename).
-      - "${RBL_HEALTHY_IPS_DIR:-../rbl-state}:/var/lib/mxsentinel"
+      - "${RBL_HEALTHY_IPS_DIR:-./rbl-state}:/var/lib/mxsentinel"
     depends_on:
       migrate: {condition: service_completed_successfully}
       nats: {condition: service_healthy}
@@ -365,7 +365,7 @@ services:
       # Host dir holding the failover-domains state file the host-side hook reads. Writable so
       # relayfailoverd can update it atomically (temp file + rename). Matches the hook's default
       # (deploy/failover-state/failover-domains).
-      - "${FAILOVER_STATE_DIR:-../failover-state}:/var/lib/mxsentinel"
+      - "${FAILOVER_STATE_DIR:-./failover-state}:/var/lib/mxsentinel"
     depends_on:
       migrate: {condition: service_completed_successfully}
       clickhouse: {condition: service_healthy}

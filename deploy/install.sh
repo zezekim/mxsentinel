@@ -574,6 +574,15 @@ provision_relay_failover() {
 
 	systemctl reload postfix || systemctl restart postfix
 
+	# 4b) The bind-mounted state dir relayfailoverd writes (deploy/failover-state) must be
+	#     writable by the container's non-root user (distroless nonroot = UID 65532), or the
+	#     daemon can't render the domain set / creds the host hook reads. Create it and hand it
+	#     to that UID.
+	install -d -o 65532 -g 65532 "$REPO_ROOT/deploy/failover-state" 2>/dev/null || {
+		mkdir -p "$REPO_ROOT/deploy/failover-state"
+		chown 65532:65532 "$REPO_ROOT/deploy/failover-state" 2>/dev/null || true
+	}
+
 	# 5) Install the host-side hook on cron (every 2 min) if we can find it in the repo.
 	local hook="$SCRIPT_DIR/hooks/relay-failover-hook.sh"
 	if [ -f "$hook" ]; then
