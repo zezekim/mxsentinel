@@ -85,20 +85,25 @@ relay by the existing host-side hook so Postfix stays authoritative and mail-pat
 | *(new)* routing mode | **Always route** / **Only on 4xx throttling** |
 | `MXS_FAILOVER_PROVIDER`, `_TRIP_RATE`, `_WINDOW`, `_HOLD`, `_MIN_ATTEMPTS`, `_MIN_DEFERS`, `_MAX_DOMAINS` | Failover tuning (advanced) |
 
+### Providers & keys (shipped): Settings → "Providers & keys"
+
+Dashboard-managed via `GET/PUT /v1/settings/integrations`; secrets sealed at rest; the owning
+daemon reads them at startup (dashboard value wins over env). Restart the daemon to apply.
+
+- **AI backend** (aid): `MXS_AI_ENDPOINT`, `MXS_AI_MODEL`, `MXS_AI_APIKEY`, `MXS_AI_TIMEOUTSECS`.
+- **Microsoft SNDS** (sndsd): `MXS_SNDS_KEY`.
+- **Google Postmaster** (fbld): `GOOGLE_POSTMASTER_TOKEN`.
+- **Notification email sender**: `MXS_SMTP_HOST/PORT/USERNAME/PASSWORD/FROM`.
+
 ### Follow-up batches (same pattern: sealed DB config + typed settings API)
 
-- **AI backend:** `MXS_AI_ENDPOINT`, `MXS_AI_MODEL`, `MXS_AI_APIKEY`, `MXS_AI_TIMEOUTSECS`.
-- **Deliverability integration keys:** `GOOGLE_POSTMASTER_TOKEN` (fbld), `MXS_SNDS_KEY` (sndsd).
-- **Notification email sender:** `MXS_SMTP_HOST/PORT/USERNAME/PASSWORD/FROM`.
 - **Seed-list testing:** `MXS_SEEDTEST_SMTP_*`, `MXS_SEEDTEST_IMAP_ACCOUNTS`, windows/intervals.
 - **DMARC pull:** `MXS_DMARCP_BASEURL/APIKEY/INTERVAL/LOOKBACKDAYS/TENANTID`.
 - **Daemon tuning (advanced, low priority):** `AUTHWATCH_*` (12), `MXS_BOUNCE_*`,
   `MXS_MTASTS_*`, `MXS_PROBE_*`, `MXS_SNDS_INTERVAL/URL`, `MXS_TLSRPT_*`, `MXS_NOTIFY_*`,
   `MXS_BIMI_*`, `MXS_JMRP_*`, `MXS_NLQUERY_MAX_TOOLS`.
 
-These are deliberately phased: each involves a sealed-config column, a typed settings
-endpoint, and a dashboard form. They share one mechanism (below), so later batches are
-incremental.
+These share one mechanism (below), so later batches are incremental.
 
 ---
 
@@ -108,8 +113,10 @@ incremental.
    `internal/crypto` (`MXS_ENCRYPTION_KEY`), same as cPanel/WHMCS/alert-channel creds today.
 2. **API:** typed `GET/PUT` under `/v1/settings/*`, `ScopeAdmin`; secrets are **write-only**
    (never returned; GET returns a "configured" boolean + non-secret fields).
-3. **Consumption:** the owning daemon reads config from the DB (env remains a fallback/override
-   for air-gapped deploys). Env precedence: explicit env var > DB value > built-in default.
+3. **Consumption:** the owning daemon reads config from the DB, with precedence **dashboard
+   (DB) value > env var > built-in default** — a value set in the UI is authoritative so edits
+   take effect; env is the bootstrap/fallback for deploys that don't use the dashboard. (The
+   smarthost re-reads every tick; the provider keys apply on daemon restart.)
 4. **Relay hand-off (smarthost only):** the daemon renders Postfix fragments into the
    bind-mounted state dir; the host hook applies them and reloads. The container never touches
    host Postfix directly.

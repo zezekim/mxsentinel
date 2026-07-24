@@ -568,6 +568,40 @@ export function updateSmarthost(smarthost: Smarthost): Promise<SmarthostResponse
   return apiPut<SmarthostResponse>("/v1/settings/smarthost", smarthost);
 }
 
+// Provider settings (AI, Microsoft SNDS, Google Postmaster, notification email). Secret
+// fields are write-only: send to set/change, omit to keep the stored one; GET reports *_set.
+export interface IntegrationSettings {
+  ai: {
+    endpoint: string;
+    model: string;
+    api_key?: string;
+    api_key_set: boolean;
+    timeout_secs: number;
+  };
+  microsoft: { snds_key?: string; snds_key_set: boolean };
+  google: { postmaster_token?: string; postmaster_token_set: boolean };
+  notify_email: {
+    host: string;
+    port: number;
+    username: string;
+    password?: string;
+    password_set: boolean;
+    from: string;
+  };
+}
+
+export interface IntegrationSettingsResponse {
+  integrations: IntegrationSettings;
+}
+
+export function getIntegrationSettings(): Promise<IntegrationSettingsResponse> {
+  return apiGet<IntegrationSettingsResponse>("/v1/settings/integrations");
+}
+
+export function updateIntegrationSettings(v: IntegrationSettings): Promise<IntegrationSettingsResponse> {
+  return apiPut<IntegrationSettingsResponse>("/v1/settings/integrations", v);
+}
+
 // ── Top Senders ───────────────────────────────────────────────────────────
 
 export type SenderMetric = "volume" | "spam" | "rejected";

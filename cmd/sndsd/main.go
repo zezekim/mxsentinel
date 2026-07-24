@@ -33,6 +33,8 @@ import (
 	"time"
 
 	"github.com/zezekim/mxsentinel/internal/config"
+	"github.com/zezekim/mxsentinel/internal/crypto"
+	"github.com/zezekim/mxsentinel/internal/integrationsettings"
 	"github.com/zezekim/mxsentinel/internal/obs"
 	"github.com/zezekim/mxsentinel/internal/snds"
 	chstore "github.com/zezekim/mxsentinel/internal/store/clickhouse"
@@ -108,6 +110,17 @@ func run(dirFlag string, scanFlag, sndsFlag time.Duration) error {
 	} else {
 		ch = c
 		defer ch.Close()
+	}
+
+	// Overlay the dashboard-managed SNDS key (Settings → Providers & keys) over env; the
+	// dashboard value wins when set. Applied at startup (restart to pick up a change).
+	if tenantID := strings.TrimSpace(os.Getenv("RELAY_TENANT_ID")); tenantID != "" {
+		enc, _, encErr := crypto.NewEncryptor(cfg.Integration.EncryptionKey)
+		if encErr != nil {
+			log.Warn("init encryptor for provider settings", "err", encErr)
+		}
+		rs := integrationsettings.Resolve(ctx, pg, enc, tenantID, log)
+		sc.AccessKey = integrationsettings.Prefer(rs.SNDSKey, sc.AccessKey)
 	}
 
 	client, sndsEnabled := snds.NewClient(sc.AccessKey, sc.DataURL)

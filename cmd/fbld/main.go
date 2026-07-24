@@ -28,7 +28,9 @@ import (
 	"time"
 
 	"github.com/zezekim/mxsentinel/internal/config"
+	"github.com/zezekim/mxsentinel/internal/crypto"
 	"github.com/zezekim/mxsentinel/internal/fbl"
+	"github.com/zezekim/mxsentinel/internal/integrationsettings"
 	"github.com/zezekim/mxsentinel/internal/obs"
 	pgstore "github.com/zezekim/mxsentinel/internal/store/postgres"
 )
@@ -90,11 +92,23 @@ func run(dir string, interval, pmEvery time.Duration) error {
 	store := fbl.NewStore(pg.Pool)
 	rollup := fbl.NewRollup(pg, log, complaintThreshold())
 
+	// Resolve the Gmail Postmaster token: dashboard (Settings → Providers & keys) wins over
+	// GOOGLE_POSTMASTER_TOKEN. Applied at startup (restart to pick up a change).
+	pmToken := os.Getenv("GOOGLE_POSTMASTER_TOKEN")
+	if tenantID := strings.TrimSpace(os.Getenv("RELAY_TENANT_ID")); tenantID != "" {
+		enc, _, encErr := crypto.NewEncryptor(cfg.Integration.EncryptionKey)
+		if encErr != nil {
+			log.Warn("init encryptor for provider settings", "err", encErr)
+		}
+		rs := integrationsettings.Resolve(ctx, pg, enc, tenantID, log)
+		pmToken = integrationsettings.Prefer(rs.PostmasterToken, pmToken)
+	}
+
 	d := &daemon{
 		log:    log,
 		store:  store,
 		rollup: rollup,
-		pm:     newPostmaster(log),
+		pm:     newPostmaster(log, pmToken),
 	}
 
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -144,10 +158,10 @@ func complaintThreshold() int {
 
 // newPostmaster builds the Postmaster client from GOOGLE_POSTMASTER_TOKEN, or returns nil
 // (logging once) when the env is unset so the Postmaster half is skipped cleanly.
-func newPostmaster(log *slog.Logger) *fbl.PostmasterClient {
-	pm, ok := fbl.NewPostmasterClient(os.Getenv("GOOGLE_POSTMASTER_TOKEN"))
+func newPostmaster(log *slog.Logger, token string) *fbl.PostmasterClient {
+	pm, ok := fbl.NewPostmasterClient(token)
 	if !ok {
-		log.Info("GOOGLE_POSTMASTER_TOKEN not set; skipping Gmail Postmaster reputation (FBL complaint ingestion still active)")
+		log.Info("no Gmail Postmaster token (dashboard or GOOGLE_POSTMASTER_TOKEN); skipping Gmail Postmaster reputation (FBL complaint ingestion still active)")
 		return nil
 	}
 	return pm

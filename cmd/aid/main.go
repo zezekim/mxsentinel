@@ -16,13 +16,16 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/zezekim/mxsentinel/internal/ai"
 	"github.com/zezekim/mxsentinel/internal/config"
+	"github.com/zezekim/mxsentinel/internal/crypto"
 	"github.com/zezekim/mxsentinel/internal/events"
+	"github.com/zezekim/mxsentinel/internal/integrationsettings"
 	"github.com/zezekim/mxsentinel/internal/obs"
 	chstore "github.com/zezekim/mxsentinel/internal/store/clickhouse"
 	pgstore "github.com/zezekim/mxsentinel/internal/store/postgres"
@@ -90,6 +93,21 @@ func run(interval, anomalyEvery time.Duration, batch int) error {
 	defer bus.Close()
 	if err := bus.EnsureStreams(ctx); err != nil {
 		return err
+	}
+
+	// Overlay dashboard-managed AI settings (Settings → Providers & keys) over env config.
+	// Dashboard values win when set; env is the fallback. Applied at startup (restart to pick
+	// up a change).
+	if tenantID := strings.TrimSpace(os.Getenv("RELAY_TENANT_ID")); tenantID != "" {
+		enc, _, encErr := crypto.NewEncryptor(cfg.Integration.EncryptionKey)
+		if encErr != nil {
+			log.Warn("init encryptor for provider settings", "err", encErr)
+		}
+		rs := integrationsettings.Resolve(ctx, pg, enc, tenantID, log)
+		cfg.AI.Endpoint = integrationsettings.Prefer(rs.AIEndpoint, cfg.AI.Endpoint)
+		cfg.AI.Model = integrationsettings.Prefer(rs.AIModel, cfg.AI.Model)
+		cfg.AI.APIKey = integrationsettings.Prefer(rs.AIAPIKey, cfg.AI.APIKey)
+		cfg.AI.TimeoutSecs = integrationsettings.PreferInt(rs.AITimeoutSecs, cfg.AI.TimeoutSecs)
 	}
 
 	w := &worker{
