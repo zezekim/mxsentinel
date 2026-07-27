@@ -129,6 +129,7 @@ Next.js App Router (TypeScript). Points at `apid` via `NEXT_PUBLIC_API_TOKEN` (f
 | `docs/deploy-vps.md` | VPS runbook |
 | `docs/deploy-relay.md` | Postfix relay setup + outbound security suite (§9.8, §12) |
 | `docs/smarthost.md` | Pointing cPanel/Exim/Postfix at the relay |
+| `docs/directadmin-setup.md` | Connect a DirectAdmin (Exim) server to the relay — authenticated smarthost + bulk SPF (`deploy/scripts/da-spf-include.py`) |
 | `docs/health-score.md` | Deliverability health-score model, weights, API |
 | `docs/tls-reporting.md` | MTA-STS validation + TLS-RPT ingest pipeline |
 | `docs/bounce-suppression.md` | Bounce classification + suppression-list management |
