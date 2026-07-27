@@ -54,6 +54,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/domains/{id}/dns/snapshots", s.requireScope(ScopeRead, s.handleSnapshots))
 	mux.HandleFunc("POST /v1/domains/{id}/dns/recheck", s.requireScope(ScopeWrite, s.handleRecheck))
 	mux.HandleFunc("GET /v1/messages", s.requireScope(ScopeRead, s.handleMessages))
+	// Per-message drill-down: envelope + timeline + spam verdict (subject/headers admin-only).
+	mux.HandleFunc("GET /v1/messages/{queueID}", s.requireScope(ScopeRead, s.handleMessageDetail))
+	mux.HandleFunc("POST /v1/messages/{queueID}/reclassify", s.requireScope(ScopeWrite, s.handleReclassifyMessage))
+	// rspamd content/verdict capture (relay's rspamd Lua plugin → message_content, 30-day TTL).
+	mux.HandleFunc("POST /v1/ingest/message-content", s.requireScope(ScopeWrite, s.handleIngestMessageContent))
 	// Per-message shareable trace links (the message is keyed by relay queue id).
 	mux.HandleFunc("POST /v1/messages/{queueID}/share", s.requireScope(ScopeWrite, s.handleCreateShareLink))
 	mux.HandleFunc("GET /v1/messages/{queueID}/shares", s.requireScope(ScopeRead, s.handleListShareLinks))

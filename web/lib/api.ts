@@ -272,6 +272,89 @@ export interface MessagesResponse {
   count: number;
 }
 
+// ─── Per-message drill-down ────────────────────────────────────────────────────
+
+export interface MessageEnvelope {
+  queue_id: string;
+  message_id: string;
+  queued: string;
+  last_event: string;
+  source_ip: string;
+  sasl_username: string;
+  envelope_from: string;
+  from_domain: string;
+  recipient_domain: string;
+  provider: string;
+  spf_result: string;
+  dkim_result: string;
+  dmarc_result: string;
+  tls_used: number;
+  tls_version: string;
+  size_bytes: number;
+  outcome: string;
+  smtp_code: number;
+  enhanced_status: string;
+  response_text: string;
+}
+
+export interface TimelineEvent {
+  event_time: string;
+  event_type: string;
+  provider: string;
+  mx_host: string;
+  recipient_domain: string;
+  smtp_code: number;
+  enhanced_status: string;
+  bounce_class: string;
+  response_text: string;
+}
+
+export interface SpamSymbol {
+  name: string;
+  score: number;
+}
+
+export interface SpamVerdict {
+  score: number;
+  action: string;
+  is_spam: boolean;
+  symbols: SpamSymbol[];
+}
+
+export interface MessageHeader {
+  name: string;
+  value: string;
+}
+
+export interface MessageContent {
+  subject: string;
+  raw_headers: string;
+  parsed_headers: MessageHeader[];
+}
+
+export interface MessageDetail {
+  envelope: MessageEnvelope;
+  timeline: TimelineEvent[];
+  content_captured: boolean;
+  spam?: SpamVerdict;
+  content?: MessageContent;
+  content_restricted?: boolean; // content exists but caller lacks the admin scope
+}
+
+export function getMessageDetail(queueId: string): Promise<MessageDetail> {
+  return apiGet<MessageDetail>(`/v1/messages/${encodeURIComponent(queueId)}`);
+}
+
+export function reclassifyMessage(
+  queueId: string,
+  spam: boolean,
+): Promise<{ queue_id: string; is_spam: boolean }> {
+  return apiPost<{ queue_id: string; is_spam: boolean }>(
+    `/v1/messages/${encodeURIComponent(queueId)}/reclassify`,
+    { spam },
+  );
+}
+
 // ─── Message share links / public trace ────────────────────────────────────────
 
 export interface ShareLink {
