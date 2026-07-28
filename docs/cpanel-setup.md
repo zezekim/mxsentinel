@@ -66,6 +66,13 @@ For each sending domain, publish (DKIM already handled by cPanel):
 - **DMARC** (TXT `_dmarc`): `v=DMARC1; p=none; rua=mailto:dmarc@yourdomain.com` — start at
   `p=none`, tighten to `quarantine`/`reject` later.
 
+To do the SPF change across **every** zone on the server at once, use
+[`deploy/scripts/cpanel-spf-relay-swap.sh`](../deploy/scripts/cpanel-spf-relay-swap.sh): it
+ensures each SPF record contains the relay include (swapping an old MailChannels include,
+adding it before `all` where missing, or `--add-missing` to create SPF for zones that have
+none). Dry-run by default; writes via `whmapi1` so cPanel bumps the serial and syncs any DNS
+cluster. (DirectAdmin equivalent: `deploy/scripts/da-spf-include.py`.)
+
 To monitor a domain's DNS posture in the dashboard, register it (bulk-import the whole
 server's list straight from cPanel):
 
