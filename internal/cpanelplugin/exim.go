@@ -73,10 +73,16 @@ func smarthostBlocks(host string, port int, username, password string) map[strin
 	// exim_paniclog), so the key never opens and signing is silently skipped. cPanel's Perl
 	// helper returns an untainted domain, and $dkim_domain (the resolved option value) is then
 	// safe to interpolate into the key path. An empty return makes signing a no-op.
+	// message_linelength_limit lifts Exim's default 998-byte cap. Mail apps (and cPanel
+	// customers' scripts) routinely emit un-wrapped lines far longer than 998 — the stock
+	// limit hard-bounces them ("message has lines too long for transport") before they ever
+	// reach the relay, even though the relay advertises CHUNKING and accepts them. cPanel's own
+	// remote_smtp doesn't bounce these, so our transport must not either.
 	transport := fmt.Sprintf(`mxsentinel_smtp:
   driver = smtp
   hosts_require_auth = %s
   hosts_require_tls = %s
+  message_linelength_limit = 52428800
   dkim_domain = ${perl{get_dkim_domain}}
   dkim_selector = default
   dkim_private_key = "/var/cpanel/domain_keys/private/${dkim_domain}"
