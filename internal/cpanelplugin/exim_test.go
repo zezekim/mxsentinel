@@ -71,6 +71,12 @@ func TestInsertRemoveRoundTrip(t *testing.T) {
 		}
 	}
 
+	// Long lines (unencoded HTML from customer apps) must not hard-bounce locally at Exim's
+	// default 998-byte cap before reaching the relay.
+	if !strings.Contains(inserted, "message_linelength_limit = 52428800") {
+		t.Fatal("transport missing message_linelength_limit override")
+	}
+
 	// Removing must restore the original bytes exactly.
 	if got := removeBlocks(inserted); got != fixtureLocal {
 		t.Fatalf("round trip not byte-identical:\n--- want ---\n%q\n--- got ---\n%q", fixtureLocal, got)
