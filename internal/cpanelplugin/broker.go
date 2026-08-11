@@ -44,6 +44,7 @@ type Broker struct {
 	log   *slog.Logger
 	up    *upstream
 	scope *scopeResolver
+	renew renewPolicy // token-renewal timings; zero value means defaults
 }
 
 // RunDaemon loads config and runs the broker until the process is signalled.
@@ -53,7 +54,7 @@ func RunDaemon(configPath string) error {
 		return err
 	}
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{})).With("service", "mxsentinel-plugin")
-	b := &Broker{cfg: cfg, log: log, up: newUpstream(cfg), scope: newScopeResolver(cfg)}
+	b := &Broker{cfg: cfg, log: log, up: newUpstream(cfg), scope: newScopeResolver(cfg), renew: defaultRenewPolicy()}
 	return b.Serve(context.Background())
 }
 
@@ -99,6 +100,9 @@ func (b *Broker) Serve(ctx context.Context) error {
 		defer cancel()
 		_ = srv.Shutdown(sctx)
 	}()
+
+	// The enrolled API token expires after a year; keep it alive for as long as we serve.
+	go b.runTokenRenewal(ctx)
 
 	b.log.Info("broker listening", "socket", b.cfg.SocketPath, "api_base", b.cfg.APIBase)
 	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {

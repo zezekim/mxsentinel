@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
@@ -597,7 +598,21 @@ func normalizeDomain(line string) string {
 func apikeyCmd(load func() (config.Config, error)) *cobra.Command {
 	c := &cobra.Command{Use: "apikey", Short: "Manage API credentials"}
 
-	var tenantSlug, name, scopes string
+	withStore := func(cmd *cobra.Command) (*pgstore.Store, context.Context, error) {
+		cfg, err := load()
+		if err != nil {
+			return nil, nil, err
+		}
+		ctx := cmd.Context()
+		pg, err := pgstore.New(ctx, cfg.Postgres)
+		if err != nil {
+			return nil, nil, err
+		}
+		return pg, ctx, nil
+	}
+
+	var tenantSlug, name, scopes, expiresIn string
+	var createJSON bool
 	create := &cobra.Command{
 		Use:   "create",
 		Short: "Create an API token for a tenant (printed once)",
@@ -609,12 +624,11 @@ func apikeyCmd(load func() (config.Config, error)) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			cfg, err := load()
+			expiresAt, err := parseExpiresIn(expiresIn)
 			if err != nil {
 				return err
 			}
-			ctx := cmd.Context()
-			pg, err := pgstore.New(ctx, cfg.Postgres)
+			pg, ctx, err := withStore(cmd)
 			if err != nil {
 				return err
 			}
@@ -628,22 +642,190 @@ func apikeyCmd(load func() (config.Config, error)) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			id, err := pg.CreateAPICredential(ctx, tenant.ID, name, prefix, hash, scopeList)
+			id, err := pg.CreateAPICredential(ctx, tenant.ID, name, prefix, hash, scopeList, expiresAt)
 			if err != nil {
 				return err
 			}
+
 			out := cmd.OutOrStdout()
+			// --json emits one object and nothing else, so scripts can parse stdout wholesale.
+			if createJSON {
+				payload := struct {
+					ID        string   `json:"id"`
+					Tenant    string   `json:"tenant"`
+					Name      string   `json:"name"`
+					Token     string   `json:"token"`
+					Prefix    string   `json:"prefix"`
+					Scopes    []string `json:"scopes"`
+					ExpiresAt string   `json:"expires_at,omitempty"`
+				}{ID: id, Tenant: tenantSlug, Name: name, Token: token, Prefix: prefix, Scopes: scopeList}
+				if expiresAt != nil {
+					payload.ExpiresAt = expiresAt.Format(time.RFC3339)
+				}
+				return json.NewEncoder(out).Encode(payload)
+			}
 			fmt.Fprintf(out, "created api credential %s for tenant %s (scopes: %v)\n", id, tenantSlug, scopeList)
 			fmt.Fprintf(out, "token (shown once, store it now):\n  %s\n", token)
+			if expiresAt != nil {
+				fmt.Fprintf(out, "expires: %s\n", expiresAt.Format(time.RFC3339))
+			}
 			return nil
 		},
 	}
 	create.Flags().StringVar(&tenantSlug, "tenant", "", "tenant slug (e.g. demo)")
 	create.Flags().StringVar(&name, "name", "dashboard", "credential name")
-	create.Flags().StringVar(&scopes, "scopes", "read", "comma-separated scopes: read,write,admin")
+	create.Flags().StringVar(&scopes, "scopes", "read", "comma-separated scopes: read,write,admin as today; "+
+		"relay = provision SMTP submission users (what the cPanel plugin needs); "+
+		"provision = may mint read+relay keys via POST /v1/apikeys and nothing else")
+	create.Flags().StringVar(&expiresIn, "expires-in", "", "expiry as a Go duration (e.g. 8760h); empty = never expires")
+	create.Flags().BoolVar(&createJSON, "json", false, "print a single JSON object instead of prose")
 
-	c.AddCommand(create)
+	var listTenant string
+	var listJSON bool
+	list := &cobra.Command{
+		Use:   "list",
+		Short: "List a tenant's API credentials (never prints tokens)",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if listTenant == "" {
+				return fmt.Errorf("--tenant is required")
+			}
+			pg, ctx, err := withStore(cmd)
+			if err != nil {
+				return err
+			}
+			defer pg.Close()
+			tenant, err := pg.GetTenantBySlug(ctx, listTenant)
+			if err != nil {
+				return err
+			}
+			creds, err := pg.ListAPICredentials(ctx, tenant.ID)
+			if err != nil {
+				return err
+			}
+
+			out := cmd.OutOrStdout()
+			if listJSON {
+				type row struct {
+					ID         string   `json:"id"`
+					Name       string   `json:"name"`
+					Prefix     string   `json:"prefix"`
+					Scopes     []string `json:"scopes"`
+					CreatedAt  string   `json:"created_at"`
+					LastUsedAt string   `json:"last_used_at,omitempty"`
+					ExpiresAt  string   `json:"expires_at,omitempty"`
+					RevokedAt  string   `json:"revoked_at,omitempty"`
+					Status     string   `json:"status"`
+				}
+				rows := make([]row, 0, len(creds)) // non-nil so an empty tenant marshals as []
+				for _, cr := range creds {
+					rows = append(rows, row{
+						ID: cr.ID, Name: cr.Name, Prefix: cr.TokenPrefix, Scopes: cr.Scopes,
+						CreatedAt: cr.CreatedAt, LastUsedAt: cr.LastUsedAt, ExpiresAt: cr.ExpiresAt,
+						RevokedAt: cr.RevokedAt, Status: credentialStatus(cr),
+					})
+				}
+				return json.NewEncoder(out).Encode(rows)
+			}
+			if len(creds) == 0 {
+				fmt.Fprintln(out, "no api credentials")
+				return nil
+			}
+			tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(tw, "NAME\tPREFIX\tSCOPES\tCREATED\tLAST USED\tEXPIRES\tSTATUS")
+			for _, cr := range creds {
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+					cr.Name, cr.TokenPrefix, strings.Join(cr.Scopes, ","),
+					shortTime(cr.CreatedAt), shortTime(cr.LastUsedAt), shortTime(cr.ExpiresAt),
+					credentialStatus(cr))
+			}
+			return tw.Flush()
+		},
+	}
+	list.Flags().StringVar(&listTenant, "tenant", "", "tenant slug")
+	list.Flags().BoolVar(&listJSON, "json", false, "print the raw credential array as JSON")
+
+	var revokeTenant, revokeName string
+	revoke := &cobra.Command{
+		Use:   "revoke",
+		Short: "Revoke a tenant's API credential by name (its token stops working immediately)",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if revokeTenant == "" || revokeName == "" {
+				return fmt.Errorf("--tenant and --name are required")
+			}
+			pg, ctx, err := withStore(cmd)
+			if err != nil {
+				return err
+			}
+			defer pg.Close()
+			tenant, err := pg.GetTenantBySlug(ctx, revokeTenant)
+			if err != nil {
+				return err
+			}
+			found, err := pg.RevokeAPICredentialByName(ctx, tenant.ID, revokeName)
+			if err != nil {
+				return err
+			}
+			if !found {
+				return fmt.Errorf("no api credential named %q in tenant %s — nothing was revoked "+
+					"(run: mxctl apikey list --tenant %s)", revokeName, revokeTenant, revokeTenant)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(),
+				"revoked api credential %q in tenant %s — its token no longer authenticates\n",
+				revokeName, revokeTenant)
+			return nil
+		},
+	}
+	revoke.Flags().StringVar(&revokeTenant, "tenant", "", "tenant slug")
+	revoke.Flags().StringVar(&revokeName, "name", "", "credential name to revoke")
+
+	c.AddCommand(create, list, revoke)
 	return c
+}
+
+// parseExpiresIn turns a Go duration string into an absolute expiry. Empty means "never
+// expires", which the store represents as a nil *time.Time.
+func parseExpiresIn(s string) (*time.Time, error) {
+	if strings.TrimSpace(s) == "" {
+		return nil, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --expires-in %q (want a Go duration like 8760h): %w", s, err)
+	}
+	if d <= 0 {
+		return nil, fmt.Errorf("invalid --expires-in %q: must be positive", s)
+	}
+	t := time.Now().Add(d).UTC()
+	return &t, nil
+}
+
+// credentialStatus reports whether a credential would authenticate right now. "expired" is
+// distinct from "active" because auth filters on expires_at as well as revoked_at — an
+// enrolled server whose year is up presents as a working credential in every other column,
+// and calling that "active" would send an operator hunting the wrong fault.
+func credentialStatus(cr pgstore.APICredentialInfo) string {
+	if cr.RevokedAt != "" {
+		return "revoked"
+	}
+	if cr.ExpiresAt != "" {
+		if exp, err := time.Parse(time.RFC3339, cr.ExpiresAt); err == nil && !exp.After(time.Now()) {
+			return "expired"
+		}
+	}
+	return "active"
+}
+
+// shortTime renders an RFC3339 timestamp for table display; "" (never used / no expiry)
+// becomes a dash, and anything unparseable is passed through untouched.
+func shortTime(s string) string {
+	if s == "" {
+		return "-"
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return s
+	}
+	return t.UTC().Format("2006-01-02 15:04")
 }
 
 func messageCmd(load func() (config.Config, error)) *cobra.Command {
@@ -724,9 +906,15 @@ func messageCmd(load func() (config.Config, error)) *cobra.Command {
 	return c
 }
 
-// parseScopes splits/validates a comma-separated scope list (read|write|admin).
+// parseScopes splits/validates a comma-separated scope list (read|write|relay|provision|admin).
 func parseScopes(s string) ([]string, error) {
-	valid := map[string]bool{api.ScopeRead: true, api.ScopeWrite: true, api.ScopeAdmin: true}
+	valid := map[string]bool{
+		api.ScopeRead:      true,
+		api.ScopeWrite:     true,
+		api.ScopeRelay:     true,
+		api.ScopeProvision: true,
+		api.ScopeAdmin:     true,
+	}
 	seen := map[string]bool{}
 	var out []string
 	for _, raw := range strings.Split(s, ",") {
@@ -735,7 +923,7 @@ func parseScopes(s string) ([]string, error) {
 			continue
 		}
 		if !valid[sc] {
-			return nil, fmt.Errorf("invalid scope %q (allowed: read, write, admin)", sc)
+			return nil, fmt.Errorf("invalid scope %q (allowed: read, write, relay, provision, admin)", sc)
 		}
 		if !seen[sc] {
 			seen[sc] = true

@@ -5,20 +5,26 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
 // upstream is a minimal MX Sentinel apid client. It is constructed once in the broker
 // and is the *only* holder of the API token in this process.
 type upstream struct {
-	base  string
+	base string
+	http *http.Client
+
+	// mu guards token: the renewal loop rotates it from a background goroutine while
+	// request handlers are reading it to sign calls.
+	mu    sync.RWMutex
 	token string
-	http  *http.Client
 }
 
 func newUpstream(cfg Config) *upstream {
@@ -30,6 +36,41 @@ func newUpstream(cfg Config) *upstream {
 		token: cfg.Token,
 		http:  &http.Client{Timeout: 20 * time.Second, Transport: tr},
 	}
+}
+
+// Token returns the bearer token currently in force.
+func (u *upstream) Token() string {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+	return u.token
+}
+
+// SetToken installs a rotated token. Requests already in flight keep signing with the
+// old one, which is harmless: the server honours it for its grace window.
+func (u *upstream) SetToken(token string) {
+	u.mu.Lock()
+	u.token = token
+	u.mu.Unlock()
+}
+
+// httpError carries the upstream status next to the message so callers can tell a dead
+// token (401) — which no amount of retrying will fix — from a transient failure. The
+// message text is what operators already see, so it is kept verbatim.
+type httpError struct {
+	status int
+	msg    string
+}
+
+func (e *httpError) Error() string { return e.msg }
+
+// statusOf reports the upstream HTTP status behind err, or 0 when err did not come from
+// a response (dial failure, timeout, decode error).
+func statusOf(err error) int {
+	var he *httpError
+	if errors.As(err, &he) {
+		return he.status
+	}
+	return 0
 }
 
 // DomainItem mirrors apid's GET /v1/domains list item (internal/api/handlers_domains.go).
@@ -79,7 +120,7 @@ func (u *upstream) getRaw(ctx context.Context, path string) (json.RawMessage, er
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+u.token)
+	req.Header.Set("Authorization", "Bearer "+u.Token())
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := u.http.Do(req)
@@ -89,10 +130,10 @@ func (u *upstream) getRaw(ctx context.Context, path string) (json.RawMessage, er
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return nil, fmt.Errorf("upstream %s: token rejected (status %d)", path, resp.StatusCode)
+		return nil, &httpError{resp.StatusCode, fmt.Sprintf("upstream %s: token rejected (status %d)", path, resp.StatusCode)}
 	}
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("upstream %s: status %d", path, resp.StatusCode)
+		return nil, &httpError{resp.StatusCode, fmt.Sprintf("upstream %s: status %d", path, resp.StatusCode)}
 	}
 	return json.RawMessage(body), nil
 }
@@ -160,7 +201,7 @@ func (u *upstream) sendJSON(ctx context.Context, method, path string, body, out 
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+u.token)
+	req.Header.Set("Authorization", "Bearer "+u.Token())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
@@ -171,7 +212,12 @@ func (u *upstream) sendJSON(ctx context.Context, method, path string, body, out 
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return fmt.Errorf("upstream %s: token rejected (status %d) — does it have admin scope?", path, resp.StatusCode)
+		// 401 = the token is not recognised at all; 403 = it is valid but under-scoped.
+		hint := "token not recognised — check it was copied whole and has not expired or been revoked"
+		if resp.StatusCode == http.StatusForbidden {
+			hint = `token is missing a scope — this plugin needs "read,relay" (an "admin" token also satisfies both); mint one with: mxctl apikey create --tenant <slug> --scopes read,relay --name cpanel-plugin`
+		}
+		return &httpError{resp.StatusCode, fmt.Sprintf("upstream %s: token rejected (status %d): %s", path, resp.StatusCode, hint)}
 	}
 	if resp.StatusCode >= 400 {
 		// Surface the API's error message when present.
@@ -184,7 +230,7 @@ func (u *upstream) sendJSON(ctx context.Context, method, path string, body, out 
 		if detail == "" {
 			detail = fmt.Sprintf("status %d", resp.StatusCode)
 		}
-		return fmt.Errorf("upstream %s: %s", path, detail)
+		return &httpError{resp.StatusCode, fmt.Sprintf("upstream %s: %s", path, detail)}
 	}
 	if out != nil {
 		if err := json.Unmarshal(raw, out); err != nil {
@@ -234,7 +280,7 @@ func (u *upstream) ListSMTPUsers(ctx context.Context) ([]SMTPUser, error) {
 	return out.Users, nil
 }
 
-// CreateSMTPUser provisions a SASL submission credential on the relay (admin scope).
+// CreateSMTPUser provisions a SASL submission credential on the relay (relay scope).
 func (u *upstream) CreateSMTPUser(ctx context.Context, username, password, domain string) (SMTPUser, error) {
 	var out SMTPUser
 	err := u.postJSON(ctx, "/v1/smtp-users", map[string]string{
@@ -245,8 +291,62 @@ func (u *upstream) CreateSMTPUser(ctx context.Context, username, password, domai
 	return out, err
 }
 
-// ResetSMTPUserPassword sets a new password on an existing SMTP user (admin scope).
+// ResetSMTPUserPassword sets a new password on an existing SMTP user (relay scope).
 func (u *upstream) ResetSMTPUserPassword(ctx context.Context, id, password string) error {
 	return u.sendJSON(ctx, http.MethodPatch, "/v1/smtp-users/"+url.PathEscape(id),
 		map[string]string{"password": password}, nil)
+}
+
+// MeResponse mirrors apid's GET /v1/me. ExpiresAt is a pointer because the field is
+// ABSENT for a credential that never expires — "no expiry" and "empty string" are
+// different answers, and only the first one means "there is nothing to renew".
+type MeResponse struct {
+	TenantID       string   `json:"tenant_id"`
+	Scopes         []string `json:"scopes"`
+	UserID         string   `json:"user_id"`
+	Role           string   `json:"role"`
+	CredentialName string   `json:"credential_name"`
+	ExpiresAt      *string  `json:"expires_at"`
+}
+
+// Expiry parses ExpiresAt. ok is false when the credential never expires.
+func (m MeResponse) Expiry() (t time.Time, ok bool, err error) {
+	if m.ExpiresAt == nil || strings.TrimSpace(*m.ExpiresAt) == "" {
+		return time.Time{}, false, nil
+	}
+	raw := strings.TrimSpace(*m.ExpiresAt)
+	t, err = time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("parse expires_at %q: %w", raw, err)
+	}
+	return t, true, nil
+}
+
+// Me returns who the current token is, including when it expires.
+func (u *upstream) Me(ctx context.Context) (MeResponse, error) {
+	var out MeResponse
+	err := u.get(ctx, "/v1/me", &out)
+	return out, err
+}
+
+// RenewedKey mirrors apid's POST /v1/apikeys/renew response. Token is the only copy of
+// the new secret that will ever exist outside this process — the server keeps a hash.
+type RenewedKey struct {
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Token     string   `json:"token"`
+	Prefix    string   `json:"prefix"`
+	Scopes    []string `json:"scopes"`
+	ExpiresAt string   `json:"expires_at"`
+}
+
+// RenewToken rotates this credential in place: same name, same scopes, new secret. No
+// scope is required because renewing yourself grants nothing new. The old secret keeps
+// working for a short grace window, which is what makes a crash between this call and
+// persisting the result recoverable instead of fatal.
+func (u *upstream) RenewToken(ctx context.Context) (RenewedKey, error) {
+	var out RenewedKey
+	// The endpoint takes no request body — identity comes from the bearer token.
+	err := u.postJSON(ctx, "/v1/apikeys/renew", struct{}{}, &out)
+	return out, err
 }
