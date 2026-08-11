@@ -23,7 +23,9 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // Default filesystem locations. Overridable via config / env.
@@ -53,6 +55,10 @@ type Config struct {
 	// username to the set of domains it owns. Defaults match a standard cPanel box.
 	CpanelUsersDir  string
 	UserDataDomains string
+
+	// Path is the file this config was read from, so a rotated token can be written
+	// back to the same place the daemon was started with.
+	Path string
 }
 
 // LoadConfig reads the broker config file. An empty path uses DefaultConfigPath.
@@ -69,6 +75,7 @@ func LoadConfig(path string) (Config, error) {
 		SocketPath:      DefaultSocketPath,
 		CpanelUsersDir:  defaultCpanelUsersDir,
 		UserDataDomains: defaultUserDataDomains,
+		Path:            path,
 	}
 
 	f, err := os.Open(path)
@@ -116,6 +123,139 @@ func LoadConfig(path string) (Config, error) {
 		return cfg, fmt.Errorf("config %s: token is required", path)
 	}
 	return cfg, nil
+}
+
+// WriteToken rewrites only the `token` line of the config file at path (empty path means
+// DefaultConfigPath), leaving every other key, comment, blank line and the file's ordering
+// byte-identical.
+//
+// The write is atomic — temp file in the same directory, fsync, rename — because this file
+// is the only durable copy of the API credential. A half-written plugin.conf would lock the
+// server out of the API until an operator re-enrolled it by hand, so "partially written"
+// must not be a state the file can ever be observed in.
+func WriteToken(path, token string) error {
+	if path == "" {
+		path = DefaultConfigPath
+	}
+	if strings.TrimSpace(token) == "" {
+		return fmt.Errorf("write config %s: refusing to write an empty token", path)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read config %s: %w", path, err)
+	}
+
+	// The replacement must land with the original's identity: this file is root-only 0600
+	// and a widened mode would expose the token to every cPanel user on the box.
+	mode := os.FileMode(0o600)
+	uid, gid := -1, -1
+	if fi, err := os.Stat(path); err == nil {
+		mode = fi.Mode().Perm()
+		if st, ok := fi.Sys().(*syscall.Stat_t); ok {
+			uid, gid = int(st.Uid), int(st.Gid)
+		}
+	}
+
+	return writeFileAtomic(path, []byte(replaceTokenValue(string(data), token)), mode, uid, gid)
+}
+
+// replaceTokenValue returns content with the value of every `token` line replaced,
+// preserving each line's indentation, key spelling and separator style. Every occurrence
+// is rewritten (not just the last, which is the one LoadConfig would honour) so a
+// duplicated key cannot leave a stale secret behind. If the file has no token line at all
+// — it should, but a hand-edited config is possible — one is appended rather than
+// silently discarding the new credential.
+func replaceTokenValue(content, token string) string {
+	trailingNewline := strings.HasSuffix(content, "\n")
+	body := strings.TrimSuffix(content, "\n")
+	var lines []string
+	if body != "" {
+		lines = strings.Split(body, "\n")
+	}
+
+	found := false
+	for i, line := range lines {
+		t := strings.TrimSpace(line)
+		if t == "" || strings.HasPrefix(t, "#") {
+			continue
+		}
+		if key, _ := splitKV(t); !strings.EqualFold(key, "token") {
+			continue
+		}
+		lines[i] = setLineValue(line, token)
+		found = true
+	}
+	if !found {
+		lines = append(lines, "token = "+token)
+		trailingNewline = true
+	}
+
+	out := strings.Join(lines, "\n")
+	if trailingNewline {
+		out += "\n"
+	}
+	return out
+}
+
+// setLineValue replaces the value of a "key = value" or "key value" line, keeping the
+// line's indentation, key spelling and separator so the file still looks hand-written.
+func setLineValue(line, val string) string {
+	indent := len(line) - len(strings.TrimLeft(line, " \t"))
+	head, rest := line[:indent], line[indent:]
+	if i := strings.IndexByte(rest, '='); i >= 0 {
+		return head + rest[:i+1] + " " + val
+	}
+	if i := strings.IndexAny(rest, " \t"); i >= 0 {
+		return head + rest[:i+1] + val
+	}
+	return head + rest + " = " + val
+}
+
+// writeFileAtomic replaces path in one rename, so a reader sees either the old file or
+// the new one and never a truncated middle state.
+func writeFileAtomic(path string, data []byte, mode os.FileMode, uid, gid int) error {
+	dir := filepath.Dir(path)
+	// Same directory, or the rename would cross filesystems and stop being atomic.
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*")
+	if err != nil {
+		return fmt.Errorf("create temp beside %s: %w", path, err)
+	}
+	name := tmp.Name()
+	// No early return may leave a second copy of the credential on disk. After a
+	// successful rename this is a no-op.
+	defer func() { _ = os.Remove(name) }()
+
+	if err := tmp.Chmod(mode); err != nil {
+		tmp.Close()
+		return fmt.Errorf("chmod %s: %w", name, err)
+	}
+	if uid >= 0 && gid >= 0 {
+		// Best effort: only root may chown, and root is the only writer in practice.
+		_ = os.Chown(name, uid, gid)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write %s: %w", name, err)
+	}
+	// fsync before the rename, not after: the rename must not be able to publish a file
+	// whose contents are still only in the page cache.
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("fsync %s: %w", name, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", name, err)
+	}
+	if err := os.Rename(name, path); err != nil {
+		return fmt.Errorf("replace %s: %w", path, err)
+	}
+	// Persist the directory entry too, so the rename itself survives a power cut.
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		_ = d.Close()
+	}
+	return nil
 }
 
 // splitKV splits a config line on the first '=' or whitespace run.

@@ -123,6 +123,42 @@ An existing **admin**-scope token still works — `admin` satisfies every scope 
 servers installed before self-enrollment keep working untouched. A per-server read+relay key
 is preferred anyway: it is individually revocable and can do nothing but relay work.
 
+### Token renewal
+
+An enrolled key expires 365 days after it is issued, and the broker daemon renews it
+**automatically** — there is nothing for an operator to schedule or remember. Every **12
+hours** it checks its own expiry (`GET /v1/me`) and, when fewer than **30 days** remain, it
+calls `POST /v1/apikeys/renew`. The new token is written back into
+`/etc/mxsentinel/plugin.conf` **atomically, before the daemon adopts it**, so an interrupted
+renewal can never leave the file holding a token the server has already replaced. The renewed
+key keeps the same name and the same `read`+`relay` scopes; only the secret and the expiry
+change — no re-enrollment, and the enrollment token is not involved. The *old* token also
+stays valid for 15 minutes after renewal, so even a crash between "renewed" and "saved" is
+recoverable (see [api-v1.md](api-v1.md#the-15-minute-grace-window)).
+
+A **legacy install** whose `plugin.conf` holds a never-expiring token — an admin key, or one
+minted with no expiry — has nothing to renew. `GET /v1/me` returns no `expires_at` at all for
+such a credential, the daemon detects that and stops checking. Those installs keep working
+exactly as they did.
+
+The one case that still needs a human: a server **powered off for more than a year** past its
+last renewal wakes up with an expired token, because nothing was running to renew it in the
+meantime. Mint it a fresh key by re-running the installer with an enrollment token:
+
+```bash
+./install.sh --bin ./mxsentinel-plugin \
+  --api-base https://sentinel.example.com \
+  --enroll-token mxs_xxxxxxxx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+To see where any server stands, list the tenant's keys from the MX Sentinel host — the
+**EXPIRES** column shows each key's expiry and **STATUS** shows `active`, `expired`, or
+`revoked`:
+
+```bash
+mxctl apikey list --tenant <slug>
+```
+
 ## Install
 
 ```bash

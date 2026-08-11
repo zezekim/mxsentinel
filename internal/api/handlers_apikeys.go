@@ -16,6 +16,13 @@ import (
 // expires on its own; re-running the installer re-enrolls and gets a fresh year.
 const provisionedKeyTTL = 365 * 24 * time.Hour
 
+// reissueGrace is how long a credential displaced by a reissue keeps authenticating. It
+// exists for one failure mode: an unattended client renews, receives its new secret, and
+// then dies before persisting it — a crash, a full disk, a read-only filesystem. Without a
+// grace it is locked out permanently and needs an operator on the box; with one it simply
+// retries. Deliberate revocation is unaffected and takes effect immediately.
+const reissueGrace = 15 * time.Minute
+
 // provisionedNamePattern constrains the names a provision-scoped caller may claim. Pinning
 // them to a cpanel- prefix means a leaked enrollment token cannot overwrite the operator's
 // own credentials by minting something called "dashboard" and tripping the reissue path.
@@ -162,7 +169,7 @@ func (s *Server) handleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// Enrollment must be idempotent: a rebuilt server re-runs the installer with the
 		// same name and has to come back with a working key, not a 409.
-		id, replaced, err = s.pg.ReissueAPICredential(r.Context(), tenant, req.Name, prefix, hash, scopes, expiresAt, provisionableScopeList)
+		id, replaced, err = s.pg.ReissueAPICredential(r.Context(), tenant, req.Name, prefix, hash, scopes, expiresAt, provisionableScopeList, reissueGrace)
 		if err != nil {
 			if isUniqueViolation(err) {
 				// The name is taken by a credential this caller is not entitled to displace
@@ -192,6 +199,70 @@ func (s *Server) handleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 		apiKeyJSON
 		Token string `json:"token"`
 	}{apiKeyJSON: resp, Token: token})
+}
+
+// handleRenewAPIKey rotates the *calling* credential's secret and pushes out its expiry.
+//
+// This requires no particular scope, which is deliberate: renewing grants nothing new. The
+// credential keeps its name and its exact scope set, and the caller already possesses the
+// secret it is replacing. Anything stricter would mean an unattended client had to keep a
+// second, more privileged credential on disk purely to refresh the first — which is the
+// problem this whole feature exists to remove.
+//
+// The old secret keeps working for reissueGrace afterwards. A client that renews and then
+// dies before writing the new token to disk would otherwise be locked out permanently, with
+// no way back in short of an operator re-running the installer.
+func (s *Server) handleRenewAPIKey(w http.ResponseWriter, r *http.Request) {
+	a, ok := authFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+		return
+	}
+	// Session tokens have their own lifecycle (Redis TTL, re-login); they are not rows in
+	// api_credentials and there is nothing here to rotate.
+	if a.CredID == "" {
+		writeError(w, http.StatusBadRequest, "bad_request",
+			"only API credentials can be renewed; a user session token is refreshed by logging in again")
+		return
+	}
+	if a.CredExpiresAt == nil {
+		writeError(w, http.StatusBadRequest, "bad_request",
+			"this credential does not expire — there is nothing to renew")
+		return
+	}
+
+	token, prefix, hash, err := GenerateToken()
+	if err != nil {
+		s.log.Error("generate api token", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "could not generate token")
+		return
+	}
+
+	// Same name, same scopes: the renewed credential is the same credential. Passing the
+	// caller's own scopes as the replaceable set means it can only ever displace itself.
+	expires := time.Now().Add(provisionedKeyTTL).UTC()
+	id, _, err := s.pg.ReissueAPICredential(r.Context(), a.TenantID, a.CredName, prefix, hash,
+		a.Scopes, &expires, a.Scopes, reissueGrace)
+	if err != nil {
+		s.log.Error("renew api credential", "err", err, "name", a.CredName)
+		writeError(w, http.StatusInternalServerError, "internal", "could not renew api credential")
+		return
+	}
+
+	s.log.Info("api credential renewed",
+		"id", id, "name", a.CredName, "prev_cred", a.CredID, "new_prefix", prefix,
+		"expires_at", expires.Format(time.RFC3339))
+
+	writeJSON(w, http.StatusOK, struct {
+		apiKeyJSON
+		Token string `json:"token"`
+	}{
+		apiKeyJSON: apiKeyJSON{
+			ID: id, Name: a.CredName, Prefix: prefix, Scopes: a.Scopes,
+			ExpiresAt: expires.Format(time.RFC3339),
+		},
+		Token: token,
+	})
 }
 
 // handleListAPIKeys lists the tenant's credentials without their secrets (admin scope).

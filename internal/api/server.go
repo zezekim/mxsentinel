@@ -98,6 +98,9 @@ func (s *Server) Handler() http.Handler {
 	// API credential management. Minting takes "provision" (admin satisfies it too); the
 	// handler itself constrains what a provision-only caller may grant.
 	mux.HandleFunc("POST /v1/apikeys", s.requireScope(ScopeProvision, s.handleCreateAPIKey))
+	// Renewal needs no scope: a credential rotating its own secret gains nothing it did not
+	// already have. requireAuth alone is the gate.
+	mux.HandleFunc("POST /v1/apikeys/renew", s.handleRenewAPIKey)
 	mux.HandleFunc("GET /v1/apikeys", s.requireScope(ScopeAdmin, s.handleListAPIKeys))
 	mux.HandleFunc("DELETE /v1/apikeys/{id}", s.requireScope(ScopeAdmin, s.handleRevokeAPIKey))
 	mux.HandleFunc("GET /v1/settings", s.requireScope(ScopeRead, s.handleGetSettings))

@@ -1,15 +1,25 @@
 package api
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // AuthInfo is the authenticated caller, resolved from either an API token or a user
-// session token. UserID/Role are set only for session (user-login) auth.
+// session token. UserID/Role are set only for session (user-login) auth; CredName and
+// CredExpiresAt only for API-credential auth.
 type AuthInfo struct {
 	TenantID string
 	CredID   string
-	UserID   string
-	Role     string
-	Scopes   []string
+	// CredName is the credential's per-tenant name; "" for session auth. Renewal needs it
+	// because a renewed credential keeps its name.
+	CredName string
+	// CredExpiresAt is when the credential stops authenticating; nil means never (or that
+	// the caller is a session, which has its own lifecycle).
+	CredExpiresAt *time.Time
+	UserID        string
+	Role          string
+	Scopes        []string
 }
 
 type ctxKey int

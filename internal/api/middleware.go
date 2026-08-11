@@ -106,7 +106,10 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 			return
 		}
 		_ = s.pg.TouchAPICredential(r.Context(), cred.ID) // best-effort last-used stamp
-		ctx := withAuth(r.Context(), AuthInfo{TenantID: cred.TenantID, CredID: cred.ID, Scopes: cred.Scopes})
+		ctx := withAuth(r.Context(), AuthInfo{
+			TenantID: cred.TenantID, CredID: cred.ID, CredName: cred.Name,
+			CredExpiresAt: cred.ExpiresAt, Scopes: cred.Scopes,
+		})
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

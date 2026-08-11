@@ -35,10 +35,20 @@ keep working unchanged — there is no flag day and nothing to reissue.
 A call lacking the required scope returns **403** `{"error":{"code":"forbidden",...}}`.
 
 ### `GET /v1/me`
-Returns the authenticated caller's tenant, scopes, and (for user sessions) role/user id:
+Returns the authenticated caller's tenant, credential name, scopes, expiry, and (for user
+sessions) role/user id:
 ```json
-{ "tenant_id": "uuid", "scopes": ["read", "write"], "role": "owner", "user_id": "uuid" }
+{ "tenant_id": "uuid", "credential_name": "cpanel-host.example.com",
+  "scopes": ["read", "relay"], "expires_at": "2027-08-12T00:00:00Z",
+  "role": "owner", "user_id": "uuid" }
 ```
+- `credential_name` — the name the calling credential was minted under; `""` for user
+  session tokens.
+- `expires_at` — RFC 3339, and **absent from the response entirely** when the credential
+  never expires (rather than `null` or a far-future date). A client can therefore tell
+  "nothing to renew" from "expires later" without a sentinel value, which is exactly how a
+  self-renewing client decides whether to bother — see
+  [`POST /v1/apikeys/renew`](#post-v1apikeysrenew).
 
 ## User login & sessions
 
@@ -313,11 +323,42 @@ What a caller may ask for depends on the scopes it holds:
 | `admin` | any | any | as requested | **409** |
 | `provision` (not `admin`) | a subset of `read`, `relay` | must match `^cpanel-[a-z0-9][a-z0-9.-]*$` | forced to 365 days | the existing credential is revoked and a fresh one issued (idempotent re-enrollment) |
 
+#### `POST /v1/apikeys/renew`
+
+Renew **the calling credential itself**. No request body, and **no particular scope** — any
+valid API credential may renew itself. That is safe because renewal grants nothing new: the
+reissued key keeps the same name and the same scopes, and gets only a fresh secret and a
+pushed-out expiry. Gating it on `admin` or `provision` would just force long-lived keys to be
+more privileged than their job needs.
+
+**200** returns the same shape as `POST /v1/apikeys`, including the `token` — once.
+
+**400** if the credential has no expiry (there is nothing to renew), or if the caller is a
+user session token (sessions are renewed by logging in again, not here).
+
+##### The 15-minute grace window
+
+Renewal replaces the old secret, but **the old token keeps working for 15 minutes**
+afterwards: the server dates the old credential's revocation 15 minutes into the future
+rather than revoking it on the spot. This exists for the client that renews successfully and
+then fails to *persist* the new token — crash, full disk, read-only filesystem. Without the
+window such a client would be permanently locked out, holding a token the server no longer
+accepts; with it, the client can simply retry with the token it still has.
+
+The same window applies to the other replacement-by-reissue path: re-enrolling a host that
+already has a key (`POST /v1/apikeys` from a `provision` caller) also leaves the displaced
+key alive for 15 minutes, for the same reason — the installer may fail to write the new one.
+
+Deliberate revocation is **immediate** — `mxctl apikey revoke` and `DELETE /v1/apikeys/{id}`
+cut a key off at once, with no 15-minute tail, and that holds even for a key currently inside
+a grace window. An operator killing a leaked key does not have to wait it out.
+
 #### `GET /v1/apikeys` (admin)
 Lists the tenant's API keys — metadata and status only; plaintext tokens are never recoverable.
 
 #### `DELETE /v1/apikeys/{id}` (admin)
-Revokes a key; it stops authenticating immediately.
+Revokes a key; it stops authenticating immediately — the renewal grace window above does not
+apply to explicit revocation.
 
 #### Enrollment flow
 
@@ -332,7 +373,11 @@ curl -sS -X POST https://sentinel.example.com/v1/apikeys \
 ```
 
 Re-running that on the same host is safe: the old credential for `cpanel-<fqdn>` is revoked
-and replaced. From the MX Sentinel host, the same keys are managed with
+and replaced. A key minted this way expires in 365 days, but re-enrollment is not how it
+stays alive: the holder keeps it current itself with `POST /v1/apikeys/renew`, so the
+enrollment token is only needed to bootstrap a server (see
+[cpanel-plugin.md → Token renewal](cpanel-plugin.md#token-renewal)).
+From the MX Sentinel host, the same keys are managed with
 `mxctl apikey list --tenant <slug>` and `mxctl apikey revoke --tenant <slug> --name <name>`
 (`mxctl apikey create` also takes `--expires-in <duration>` and `--json`).
 
