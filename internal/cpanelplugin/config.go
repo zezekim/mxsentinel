@@ -40,7 +40,9 @@ const (
 type Config struct {
 	// APIBase is the MX Sentinel apid base URL, e.g. https://api.mxsentinel.example.com
 	APIBase string
-	// Token is a tenant API token (mxs_...) with at least read scope.
+	// Token is a tenant API token (mxs_...) with the "read" and "relay" scopes — read for
+	// the dashboard views, relay to provision the relay's SMTP submission user. An "admin"
+	// token is still accepted (it satisfies every scope) for backward compatibility.
 	Token string
 	// VerifySSL controls TLS verification when calling APIBase. Default true.
 	VerifySSL bool

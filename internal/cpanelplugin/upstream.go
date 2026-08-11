@@ -171,7 +171,12 @@ func (u *upstream) sendJSON(ctx context.Context, method, path string, body, out 
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return fmt.Errorf("upstream %s: token rejected (status %d) — does it have admin scope?", path, resp.StatusCode)
+		// 401 = the token is not recognised at all; 403 = it is valid but under-scoped.
+		hint := "token not recognised — check it was copied whole and has not expired or been revoked"
+		if resp.StatusCode == http.StatusForbidden {
+			hint = `token is missing a scope — this plugin needs "read,relay" (an "admin" token also satisfies both); mint one with: mxctl apikey create --tenant <slug> --scopes read,relay --name cpanel-plugin`
+		}
+		return fmt.Errorf("upstream %s: token rejected (status %d): %s", path, resp.StatusCode, hint)
 	}
 	if resp.StatusCode >= 400 {
 		// Surface the API's error message when present.
@@ -234,7 +239,7 @@ func (u *upstream) ListSMTPUsers(ctx context.Context) ([]SMTPUser, error) {
 	return out.Users, nil
 }
 
-// CreateSMTPUser provisions a SASL submission credential on the relay (admin scope).
+// CreateSMTPUser provisions a SASL submission credential on the relay (relay scope).
 func (u *upstream) CreateSMTPUser(ctx context.Context, username, password, domain string) (SMTPUser, error) {
 	var out SMTPUser
 	err := u.postJSON(ctx, "/v1/smtp-users", map[string]string{
@@ -245,7 +250,7 @@ func (u *upstream) CreateSMTPUser(ctx context.Context, username, password, domai
 	return out, err
 }
 
-// ResetSMTPUserPassword sets a new password on an existing SMTP user (admin scope).
+// ResetSMTPUserPassword sets a new password on an existing SMTP user (relay scope).
 func (u *upstream) ResetSMTPUserPassword(ctx context.Context, id, password string) error {
 	return u.sendJSON(ctx, http.MethodPatch, "/v1/smtp-users/"+url.PathEscape(id),
 		map[string]string{"password": password}, nil)

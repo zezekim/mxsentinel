@@ -7,9 +7,13 @@
 # Base URL of your MX Sentinel apid (no trailing slash).
 api_base = https://api.mxsentinel.example.com
 
-# A tenant API token (mxs_...) with ADMIN scope — the WHM relay installer provisions the
-# relay's SMTP submission user (POST /v1/smtp-users), which requires admin. Mint one with:
-#   mxctl apikey create --tenant <slug> --scopes admin --name cpanel-plugin
+# A tenant API token (mxs_...). READ + RELAY scope is sufficient: `relay` covers the relay's
+# SMTP submission user (POST /v1/smtp-users), which the WHM installer provisions. Normally
+# install.sh writes this line for you — given an enrollment token (--enroll-token, a
+# `provision`-scoped key) it mints this server its own read+relay key, named cpanel-<fqdn>.
+# To mint one by hand instead:
+#   mxctl apikey create --tenant <slug> --scopes read,relay --name cpanel-<fqdn>
+# An older ADMIN-scope token still works (admin satisfies every scope check).
 token = mxs_xxxxxxxx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 # Verify the apid TLS certificate. Set to false only for an internal CA / self-signed

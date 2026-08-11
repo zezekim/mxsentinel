@@ -12,7 +12,8 @@ Authorization: Bearer mxs_<prefix>_<secret>
 ```
 
 Create one with `mxctl apikey create --tenant <slug> --scopes read,write` (the token is
-printed once). The token resolves to a tenant; **all queries are tenant-scoped** — a token
+printed once), or mint one over the API — see [API keys & self-enrollment](#api-keys--self-enrollment).
+The token resolves to a tenant; **all queries are tenant-scoped** — a token
 for one tenant cannot read another tenant's data. Only a SHA-256 hash of the token is
 stored.
 
@@ -24,7 +25,12 @@ Tokens carry scopes; endpoints are gated by them (`admin` is a superset):
 | --- | --- |
 | `read` | all `GET` endpoints |
 | `write` | mutating endpoints (`POST .../dns/recheck`, `POST /v1/incidents/{id}/resolve`) |
+| `relay` | creating/listing/updating SMTP submission users (`/v1/smtp-users`, except `DELETE`) — what a relay client such as the cPanel plugin needs at runtime |
+| `provision` | one thing only: `POST /v1/apikeys`, and only narrowly (see below) |
 | `admin` | everything |
+
+`admin` satisfies **every** scope check, so tokens minted before `relay`/`provision` existed
+keep working unchanged — there is no flag day and nothing to reissue.
 
 A call lacking the required scope returns **403** `{"error":{"code":"forbidden",...}}`.
 
@@ -259,21 +265,76 @@ they are `null` until an incident has been analyzed.
 ### `POST /v1/incidents/{id}/resolve`
 Marks an incident resolved → `{ "resolved": true }` (404 if not found for the tenant).
 
-### `GET /v1/smtp-users` (admin)
+### `GET /v1/smtp-users` (relay)
 Lists the tenant's SMTP submission users → `{ "users": [ { "id","username","domain","enabled","created_at" } ] }`.
 Password hashes are never returned.
 
-### `POST /v1/smtp-users` (admin)
+### `POST /v1/smtp-users` (relay)
 `{ "username", "password", "domain"? }` → **201** `{ "id","username","domain","enabled" }`.
 `username` is globally unique (the relay's SASL login); `password` is ≥ 8 chars and stored
 as a bcrypt hash. **409** if the username already exists.
 
-### `PATCH /v1/smtp-users/{id}` (admin)
+### `PATCH /v1/smtp-users/{id}` (relay)
 `{ "enabled"?: bool, "password"?: string }` (at least one) → `{ "ok": true }`. Toggles the
 account and/or resets its password. **404** if not found for the tenant.
 
 ### `DELETE /v1/smtp-users/{id}` (admin)
 Removes the credential → `{ "deleted": true }` (404 if not found for the tenant).
+Deletion stays admin-only on purpose: an enrolling server needs to create its own submission
+user, never to tear down the ones other servers are authenticating with.
+
+### API keys & self-enrollment
+
+Tokens can be minted over the API as well as with `mxctl apikey create`. This exists so a
+fleet of servers — the cPanel plugin in particular — can enroll itself without an admin token
+ever landing on the remote host: hand the installer a narrow `provision` token and it mints
+its own `read`+`relay` key, which is all it needs at runtime.
+
+A key that can mint admin keys **is** an admin key, so `provision` is deliberately prevented
+from escalating: it can only ask for scopes it is allowed to hand out, under a name shape it
+is allowed to use.
+
+#### `POST /v1/apikeys` (provision)
+Mint a token for the caller's tenant. `expires_in` is optional (a Go duration string). The
+`token` is returned **once** and is never retrievable afterwards — only its SHA-256 hash and
+the non-secret `prefix` are stored.
+```json
+// request
+{ "name": "cpanel-host.example.com", "scopes": ["read", "relay"], "expires_in": "8760h" }
+// response 201
+{ "id": "uuid", "name": "cpanel-host.example.com",
+  "token": "mxs_xxxxxxxx_<40 hex>", "prefix": "mxs_xxxxxxxx",
+  "scopes": ["read", "relay"], "expires_at": "2027-08-12T00:00:00Z" }
+```
+What a caller may ask for depends on the scopes it holds:
+
+| Caller holds | Scopes it may mint | Name | Expiry | Name collision |
+| --- | --- | --- | --- | --- |
+| `admin` | any | any | as requested | **409** |
+| `provision` (not `admin`) | a subset of `read`, `relay` | must match `^cpanel-[a-z0-9][a-z0-9.-]*$` | forced to 365 days | the existing credential is revoked and a fresh one issued (idempotent re-enrollment) |
+
+#### `GET /v1/apikeys` (admin)
+Lists the tenant's API keys — metadata and status only; plaintext tokens are never recoverable.
+
+#### `DELETE /v1/apikeys/{id}` (admin)
+Revokes a key; it stops authenticating immediately.
+
+#### Enrollment flow
+
+On a new server, with only a `provision`-scoped token:
+
+```bash
+curl -sS -X POST https://sentinel.example.com/v1/apikeys \
+  -H "Authorization: Bearer $MXS_ENROLL_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d "{\"name\":\"cpanel-$(hostname -f)\",\"scopes\":[\"read\",\"relay\"]}"
+# → 201 { "token": "mxs_xxxxxxxx_…", … }   store it now; it is never shown again
+```
+
+Re-running that on the same host is safe: the old credential for `cpanel-<fqdn>` is revoked
+and replaced. From the MX Sentinel host, the same keys are managed with
+`mxctl apikey list --tenant <slug>` and `mxctl apikey revoke --tenant <slug> --name <name>`
+(`mxctl apikey create` also takes `--expires-in <duration>` and `--json`).
 
 ### `GET /v1/settings` (read)
 Returns the tenant's mail settings → `{ "settings": { "spf_include","dkim_selector",

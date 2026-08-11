@@ -86,10 +86,20 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/auth/logout", s.handleLogout)
 	mux.HandleFunc("GET /v1/users", s.requireScope(ScopeAdmin, s.handleListUsers))
 	mux.HandleFunc("POST /v1/users", s.requireScope(ScopeAdmin, s.handleCreateUser))
-	mux.HandleFunc("GET /v1/smtp-users", s.requireScope(ScopeAdmin, s.handleListSMTPUsers))
-	mux.HandleFunc("POST /v1/smtp-users", s.requireScope(ScopeAdmin, s.handleCreateSMTPUser))
-	mux.HandleFunc("PATCH /v1/smtp-users/{id}", s.requireScope(ScopeAdmin, s.handleUpdateSMTPUser))
+	// SMTP-user routes take "relay", not "admin", so an on-server relay client can provision
+	// its own submission credential without holding a tenant-wide token. admin still
+	// satisfies the check, so tokens already deployed in the field keep working.
+	mux.HandleFunc("GET /v1/smtp-users", s.requireScope(ScopeRelay, s.handleListSMTPUsers))
+	mux.HandleFunc("POST /v1/smtp-users", s.requireScope(ScopeRelay, s.handleCreateSMTPUser))
+	mux.HandleFunc("PATCH /v1/smtp-users/{id}", s.requireScope(ScopeRelay, s.handleUpdateSMTPUser))
+	// Deletion stays admin-only: enrolling a server should never be able to tear down the
+	// relay credentials other servers are authenticating with.
 	mux.HandleFunc("DELETE /v1/smtp-users/{id}", s.requireScope(ScopeAdmin, s.handleDeleteSMTPUser))
+	// API credential management. Minting takes "provision" (admin satisfies it too); the
+	// handler itself constrains what a provision-only caller may grant.
+	mux.HandleFunc("POST /v1/apikeys", s.requireScope(ScopeProvision, s.handleCreateAPIKey))
+	mux.HandleFunc("GET /v1/apikeys", s.requireScope(ScopeAdmin, s.handleListAPIKeys))
+	mux.HandleFunc("DELETE /v1/apikeys/{id}", s.requireScope(ScopeAdmin, s.handleRevokeAPIKey))
 	mux.HandleFunc("GET /v1/settings", s.requireScope(ScopeRead, s.handleGetSettings))
 	mux.HandleFunc("PUT /v1/settings", s.requireScope(ScopeAdmin, s.handleUpdateSettings))
 	mux.HandleFunc("GET /v1/settings/smarthost", s.requireScope(ScopeRead, s.handleGetSmarthost))

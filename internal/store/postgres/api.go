@@ -213,13 +213,27 @@ type APICredential struct {
 	Scopes      []string
 }
 
+// APICredentialInfo is a credential as listed for operators: everything except the secret.
+// Timestamps are RFC3339, or "" when the underlying column is NULL.
+type APICredentialInfo struct {
+	ID          string
+	Name        string
+	TokenPrefix string
+	Scopes      []string
+	CreatedAt   string
+	LastUsedAt  string // "" if never used
+	ExpiresAt   string // "" if it never expires
+	RevokedAt   string // "" if still active
+}
+
 // CreateAPICredential inserts a new API credential and returns its generated id.
-func (s *Store) CreateAPICredential(ctx context.Context, tenantID, name, tokenPrefix, tokenHash string, scopes []string) (string, error) {
-	const q = `INSERT INTO api_credentials (tenant_id, name, token_prefix, token_hash, scopes)
-	           VALUES ($1, $2, $3, $4, $5)
+// expiresAt is optional; nil means the credential never expires.
+func (s *Store) CreateAPICredential(ctx context.Context, tenantID, name, tokenPrefix, tokenHash string, scopes []string, expiresAt *time.Time) (string, error) {
+	const q = `INSERT INTO api_credentials (tenant_id, name, token_prefix, token_hash, scopes, expires_at)
+	           VALUES ($1, $2, $3, $4, $5, $6)
 	           RETURNING id`
 	var id string
-	if err := s.Pool.QueryRow(ctx, q, tenantID, name, tokenPrefix, tokenHash, scopes).Scan(&id); err != nil {
+	if err := s.Pool.QueryRow(ctx, q, tenantID, name, tokenPrefix, tokenHash, scopes, expiresAt).Scan(&id); err != nil {
 		return "", fmt.Errorf("create api credential: %w", err)
 	}
 	return id, nil
@@ -245,6 +259,122 @@ func (s *Store) GetAPICredentialByPrefix(ctx context.Context, prefix string) (cr
 		return APICredential{}, false, fmt.Errorf("get api credential by prefix: %w", err)
 	}
 	return cred, true, nil
+}
+
+// ListAPICredentials returns every credential in the tenant, revoked ones included, newest
+// first. Revoked credentials are kept in the listing deliberately: operators auditing a
+// decommissioned server need to confirm its key is actually dead.
+func (s *Store) ListAPICredentials(ctx context.Context, tenantID string) ([]APICredentialInfo, error) {
+	const q = `SELECT id, name, token_prefix, scopes, created_at, last_used_at, expires_at, revoked_at
+	           FROM api_credentials
+	           WHERE tenant_id = $1
+	           ORDER BY created_at DESC`
+	rows, err := s.Pool.Query(ctx, q, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("list api credentials: %w", err)
+	}
+	defer rows.Close()
+
+	var out []APICredentialInfo
+	for rows.Next() {
+		var (
+			c                          APICredentialInfo
+			created                    time.Time
+			lastUsed, expires, revoked *time.Time
+		)
+		if err := rows.Scan(&c.ID, &c.Name, &c.TokenPrefix, &c.Scopes, &created, &lastUsed, &expires, &revoked); err != nil {
+			return nil, fmt.Errorf("scan api credential: %w", err)
+		}
+		c.CreatedAt = created.UTC().Format(time.RFC3339)
+		c.LastUsedAt = formatNullTime(lastUsed)
+		c.ExpiresAt = formatNullTime(expires)
+		c.RevokedAt = formatNullTime(revoked)
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list api credentials: %w", err)
+	}
+	return out, nil
+}
+
+// RevokeAPICredentialByName marks a credential revoked by its per-tenant name. found=false
+// (nil error) if the tenant has no credential by that name. Revoking an already-revoked
+// credential is a no-op that still reports found=true, so callers can be run repeatedly.
+func (s *Store) RevokeAPICredentialByName(ctx context.Context, tenantID, name string) (bool, error) {
+	const q = `UPDATE api_credentials
+	           SET revoked_at = COALESCE(revoked_at, now())
+	           WHERE tenant_id = $1 AND name = $2`
+	tag, err := s.Pool.Exec(ctx, q, tenantID, name)
+	if err != nil {
+		return false, fmt.Errorf("revoke api credential by name: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// RevokeAPICredentialByID marks a credential revoked. The tenant is part of the predicate so
+// one tenant can never revoke another's credential by guessing an id.
+func (s *Store) RevokeAPICredentialByID(ctx context.Context, tenantID, id string) (bool, error) {
+	const q = `UPDATE api_credentials
+	           SET revoked_at = COALESCE(revoked_at, now())
+	           WHERE tenant_id = $1 AND id = $2`
+	tag, err := s.Pool.Exec(ctx, q, tenantID, id)
+	if err != nil {
+		return false, fmt.Errorf("revoke api credential by id: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// ReissueAPICredential atomically replaces the tenant's credential of this name with a fresh
+// secret, reporting whether one was replaced. It exists because UNIQUE (tenant_id, name)
+// means revoking a credential does NOT free its name — so re-enrolling a rebuilt server
+// would otherwise collide forever. The old row is revoked and renamed rather than deleted,
+// which keeps an audit trail of every secret that was ever valid for that server.
+//
+// replaceableScopes bounds which existing credentials may be displaced: only a row whose
+// scopes are contained in that set is archived. Without it, an enrollment token could pick
+// the name of an operator's own broader credential and revoke it — no privilege gain, but a
+// free way to knock out someone else's access. A row that exists and is NOT replaceable
+// keeps the name, so the insert below fails on the unique constraint and the caller sees a
+// conflict rather than a silent overwrite.
+//
+// Both steps run in one transaction: a partial failure that revoked the old credential
+// without issuing a new one would lock the server out of the API.
+func (s *Store) ReissueAPICredential(ctx context.Context, tenantID, name, tokenPrefix, tokenHash string, scopes []string, expiresAt *time.Time, replaceableScopes []string) (id string, replaced bool, err error) {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return "", false, fmt.Errorf("reissue api credential: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Microsecond precision in the archived name keeps it unique against every prior
+	// archive of the same base name. `<@` is Postgres array containment.
+	const archive = `UPDATE api_credentials
+	                 SET revoked_at = COALESCE(revoked_at, now()),
+	                     name = name || '-revoked-' || to_char(now() AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISSUS')
+	                 WHERE tenant_id = $1 AND name = $2 AND scopes <@ $3::text[]`
+	tag, err := tx.Exec(ctx, archive, tenantID, name, replaceableScopes)
+	if err != nil {
+		return "", false, fmt.Errorf("reissue api credential: archive: %w", err)
+	}
+	replaced = tag.RowsAffected() > 0
+
+	const insert = `INSERT INTO api_credentials (tenant_id, name, token_prefix, token_hash, scopes, expires_at)
+	                VALUES ($1, $2, $3, $4, $5, $6)
+	                RETURNING id`
+	if err := tx.QueryRow(ctx, insert, tenantID, name, tokenPrefix, tokenHash, scopes, expiresAt).Scan(&id); err != nil {
+		return "", false, fmt.Errorf("reissue api credential: insert: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", false, fmt.Errorf("reissue api credential: commit: %w", err)
+	}
+	return id, replaced, nil
+}
+
+func formatNullTime(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 // TouchAPICredential sets last_used_at = now() for the given credential id.
