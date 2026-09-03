@@ -287,7 +287,11 @@ export interface Message {
 
 export interface MessagesResponse {
   messages: Message[];
+  // count is the size of THIS page, not a total — the query has no cheap total, so the
+  // explorer detects a further page by over-fetching one row instead.
   count: number;
+  limit: number;
+  offset: number;
 }
 
 // ─── Per-message drill-down ────────────────────────────────────────────────────
