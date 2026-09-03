@@ -65,7 +65,9 @@ type Dispatcher struct {
 //  3. otherwise sends via the driver and records the outcome.
 //
 // Test notifications (n.Test) bypass dedup and throttle so an operator can always verify a
-// channel. Every decision is written to the delivery log (including skips) for audit.
+// channel; n.SkipSuppression bypasses only the throttle, for events that must never be
+// swallowed by an unrelated flapping alert (login notifications). Every decision is written
+// to the delivery log (including skips) for audit.
 func (d *Dispatcher) Dispatch(ctx context.Context, channels []Channel, n Notification) []Result {
 	results := make([]Result, 0, len(channels))
 	for _, ch := range channels {
@@ -93,7 +95,7 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, ch Channel, n Notification
 				return res
 			}
 		}
-		if d.Throttle > 0 {
+		if d.Throttle > 0 && !n.SkipSuppression {
 			if recent, err := d.Store.LastSentToChannel(ctx, ch.ID, d.Throttle); err != nil {
 				d.log().Warn("throttle check failed; proceeding", "channel_id", ch.ID, "err", err)
 			} else if recent {

@@ -11,5 +11,6 @@ func NewRegistry(cfg Config) map[string]Notifier {
 		TypeWebhook:   WebhookNotifier{HTTP: http},
 		TypePagerDuty: PagerDutyNotifier{HTTP: http},
 		TypeEmail:     EmailNotifier{Mailer: mailer, From: cfg.SMTPFrom},
+		TypeTelegram:  TelegramNotifier{HTTP: http},
 	}
 }
