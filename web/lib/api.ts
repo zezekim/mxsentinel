@@ -1202,3 +1202,96 @@ export function getDomainReport(domain: string, since?: string, until?: string):
   if (until) q.set("until", until);
   return apiGet<DomainReportResponse>(`/v1/reports/domain?${q.toString()}`);
 }
+
+// ─── Overview dashboard ───────────────────────────────────────────────────────
+
+// One time bucket of tenant-wide outcome counts, from /v1/analytics/timeseries.
+// Buckets with no traffic are absent — the rollup stores no row for a quiet period —
+// so anything drawing a continuous axis has to fill the gaps itself.
+export interface SeriesPoint {
+  bucket: string;
+  delivered: number;
+  deferred: number;
+  bounced: number;
+  rejected: number;
+  total: number;
+  delivered_rate: number;
+}
+
+export type Granularity = "5m" | "hour" | "day";
+
+export interface TimeseriesResponse {
+  points: SeriesPoint[];
+  granularity: Granularity;
+  since: string;
+  until: string;
+}
+
+export function getTimeseries(
+  since?: string,
+  until?: string,
+  granularity?: Granularity,
+): Promise<TimeseriesResponse> {
+  const q = new URLSearchParams();
+  if (since) q.set("since", since);
+  if (until) q.set("until", until);
+  if (granularity) q.set("granularity", granularity);
+  const qs = q.toString();
+  return apiGet<TimeseriesResponse>(`/v1/analytics/timeseries${qs ? `?${qs}` : ""}`);
+}
+
+// Tenant-wide summary for a period: overall counts, per-provider split, top sending
+// domains. Backs most of the overview in a single request.
+export interface SummaryDomainRow extends ReportCounts {
+  domain: string;
+}
+
+export interface TenantSummary {
+  period_start: string;
+  period_end: string;
+  overall: ReportCounts;
+  providers: ReportProviderRow[] | null;
+  top_domains: SummaryDomainRow[] | null;
+}
+
+export interface SummaryResponse {
+  summary: TenantSummary;
+}
+
+export function getSummary(since?: string, until?: string, top?: number): Promise<SummaryResponse> {
+  const q = new URLSearchParams();
+  if (since) q.set("since", since);
+  if (until) q.set("until", until);
+  if (top) q.set("top", String(top));
+  const qs = q.toString();
+  return apiGet<SummaryResponse>(`/v1/reports/summary${qs ? `?${qs}` : ""}`);
+}
+
+// Per-MESSAGE outcomes, as opposed to the per-attempt counts in SeriesPoint.
+//
+// smtp_events holds one row per delivery attempt, and a deferred message is retried
+// until it delivers or hard-fails, so a handful of stuck messages can dominate the
+// event counts. Anything describing "how much mail got through" must use these
+// figures; the event-level series describes attempts, which is a different question.
+export interface DeliveryOutcomes {
+  messages: number;
+  first_attempt_delivered: number;
+  delivered_final: number;
+  permanently_failed: number;
+  still_retrying: number;
+  ever_deferred: number;
+  deferral_events: number;
+  first_attempt_rate: number;
+  final_delivery_rate: number;
+  permanent_failure_rate: number;
+  since: string;
+  until: string;
+}
+
+export function getDeliveryOutcomes(since?: string, until?: string): Promise<DeliveryOutcomes> {
+  const q = new URLSearchParams();
+  if (since) q.set("since", since);
+  if (until) q.set("until", until);
+  const qs = q.toString();
+  return apiGet<DeliveryOutcomes>(`/v1/analytics/delivery-outcomes${qs ? `?${qs}` : ""}`);
+}
