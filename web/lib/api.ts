@@ -20,6 +20,23 @@ export function setToken(t: string): void {
 export function clearToken(): void {
   if (typeof window !== "undefined") {
     localStorage.removeItem("mxs_token");
+    localStorage.removeItem("mxs_role");
+  }
+}
+
+// The signed-in user's role, cached from the login response so the shell can draw
+// role-appropriate navigation on the very first paint instead of waiting for /v1/me
+// (see components/nav-config.tsx). Returns "" when unknown — callers must treat that
+// as "assume least privilege" rather than "no restrictions". It is a rendering hint
+// only; the API enforces the real permissions.
+export function getRole(): string {
+  if (typeof window === "undefined") return "";
+  return localStorage.getItem("mxs_role") ?? "";
+}
+
+export function setRole(role: string): void {
+  if (typeof window !== "undefined") {
+    localStorage.setItem("mxs_role", role);
   }
 }
 
@@ -129,6 +146,7 @@ export async function login(email: string, password: string): Promise<LoginRespo
   }
   const data = (await res.json()) as LoginResponse;
   setToken(data.token);
+  setRole(data.user.role);
   return data;
 }
 

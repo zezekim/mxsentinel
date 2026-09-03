@@ -323,9 +323,9 @@ export default function AuthSecurityPage() {
               borderRadius: "4px",
               border: "1px solid",
               cursor: "pointer",
-              borderColor: statsWindow === w ? "#6366f1" : "#334155",
-              background: statsWindow === w ? "#312e81" : "transparent",
-              color: statsWindow === w ? "#e0e7ff" : "#94a3b8",
+              borderColor: statsWindow === w ? "#005eb8" : "#93a1ab",
+              background: statsWindow === w ? "#005eb8" : "transparent",
+              color: statsWindow === w ? "#ffffff" : "#4c6272",
               fontWeight: statsWindow === w ? 600 : 400,
               transition: "background 0.15s, color 0.15s",
             }}
