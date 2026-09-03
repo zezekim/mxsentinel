@@ -76,6 +76,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/dmarc/threats", s.requireScope(ScopeRead, s.handleDMARCThreats))
 	mux.HandleFunc("GET /v1/dmarc/policy-advice", s.requireScope(ScopeRead, s.handleDMARCPolicyAdvice))
 	mux.HandleFunc("GET /v1/analytics/deliverability", s.requireScope(ScopeRead, s.handleDeliverability))
+	mux.HandleFunc("GET /v1/analytics/timeseries", s.requireScope(ScopeRead, s.handleDeliverabilityTimeseries))
+	mux.HandleFunc("GET /v1/analytics/delivery-outcomes", s.requireScope(ScopeRead, s.handleDeliveryOutcomes))
 	mux.HandleFunc("GET /v1/analytics/rejections", s.requireScope(ScopeRead, s.handleRejections))
 	mux.HandleFunc("GET /v1/analytics/top-senders", s.requireScope(ScopeRead, s.handleTopSenders))
 	mux.HandleFunc("GET /v1/rbl/status", s.requireScope(ScopeRead, s.handleRBLStatus))
