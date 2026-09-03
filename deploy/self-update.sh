@@ -2,10 +2,16 @@
 #
 # MX Sentinel self-updater (pull-based, CI-gated).
 #
-# Runs on the VPS (via the mxsentinel-update.timer systemd unit, or cron). It checks the
-# tracked git branch — by default `release`, which the GitHub Actions CI workflow only
-# advances after build+vet+test+typecheck pass — and, when it has moved, pulls, rebuilds,
-# and restarts the stack. It then health-checks apid and AUTOMATICALLY ROLLS BACK to the
+# Primary trigger: the `deploy` job in .github/workflows/ci.yml, which runs on a
+# self-hosted runner living on this VPS and invokes this script (MXS_UPDATE_BRANCH=main)
+# only after every other CI job — build/vet/test, lint, dashboard build, docker images,
+# schema-lint — has passed on a real push to main. That gives push-to-deploy: a commit
+# pushed from any machine lands here within a couple of minutes of CI going green.
+#
+# It can also run standalone (via the mxsentinel-update.timer systemd unit, or cron) against
+# any tracked branch, e.g. as a periodic safety net that self-heals a missed/offline runner.
+# Either way: it checks whether the tracked branch has moved and, if so, pulls, rebuilds,
+# and restarts the stack, then health-checks apid and AUTOMATICALLY ROLLS BACK to the
 # previous commit if the new version is unhealthy.
 #
 # Design goals:
