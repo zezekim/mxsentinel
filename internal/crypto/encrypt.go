@@ -34,6 +34,12 @@ func NewEncryptor(keyHex string) (*Encryptor, bool, error) {
 	return &Encryptor{key: key}, true, nil
 }
 
+// Enabled reports whether a key is configured. False means passthrough mode, where Seal
+// returns plaintext — callers storing a reversible secret (e.g. the webmail autologin copy
+// of an SMTP password) must check this and decline rather than write plaintext to the DB.
+// Nil-safe: a nil Encryptor (never wired) reports false.
+func (e *Encryptor) Enabled() bool { return e != nil && len(e.key) > 0 }
+
 // Seal encrypts plaintext to "v1:<hex(nonce+ciphertext)>".
 // In passthrough mode returns plaintext unchanged.
 func (e *Encryptor) Seal(plaintext string) (string, error) {

@@ -18,9 +18,10 @@
 		reverse_proxy apid:8080
 	}
 
-	# Roundcube webmail for the DMARC report mailbox. Served from the
-	# `dmarc-roundcube` container, which joins this same Docker network
-	# (see /opt/dmarcparser/compose.yaml).
+	# Roundcube webmail. Serves the DMARC report mailbox, and — when webmail autologin is
+	# enabled (docs/webmail-autologin.md) — the SMTP users' own mailboxes, reached from the
+	# dashboard's one-click Webmail button. Served from the `dmarc-roundcube` container,
+	# which joins this same Docker network (see /opt/dmarcparser/compose.yaml).
 	# Redirect here so Apache's own slash-redirect (plain http://) is never hit.
 	redir /roundcube /roundcube/
 	handle /roundcube/* {

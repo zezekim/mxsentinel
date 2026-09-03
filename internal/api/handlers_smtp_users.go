@@ -13,11 +13,27 @@ import (
 const minSMTPPasswordLen = 8
 
 type smtpUserJSON struct {
-	ID        string `json:"id"`
-	Username  string `json:"username"`
-	Domain    string `json:"domain"`
-	Enabled   bool   `json:"enabled"`
-	CreatedAt string `json:"created_at"`
+	ID       string `json:"id"`
+	Username string `json:"username"`
+	Domain   string `json:"domain"`
+	Enabled  bool   `json:"enabled"`
+	// WebmailAvailable reports whether this user can be opened in Roundcube with one click:
+	// the feature must be configured AND the row must carry a sealed password copy. Users
+	// created before the feature (or while no encryption key was set) have none until their
+	// next password reset. See docs/webmail-autologin.md.
+	WebmailAvailable bool   `json:"webmail_available"`
+	CreatedAt        string `json:"created_at"`
+}
+
+// sealSMTPPassword returns the AES-256-GCM sealed copy of an SMTP password to store
+// alongside its bcrypt hash, for Roundcube autologin. It returns "" — meaning "store NULL,
+// webmail unavailable" — whenever no encryption key is configured, because Encryptor.Seal
+// is a passthrough in that mode and would write the password to Postgres in the clear.
+func (s *Server) sealSMTPPassword(password string) (string, error) {
+	if !s.enc.Enabled() {
+		return "", nil
+	}
+	return s.enc.Seal(password)
 }
 
 // handleListSMTPUsers lists the tenant's SMTP submission users (admin scope).
@@ -30,7 +46,10 @@ func (s *Server) handleListSMTPUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]smtpUserJSON, 0, len(users))
 	for _, u := range users {
-		items = append(items, smtpUserJSON{ID: u.ID, Username: u.Username, Domain: u.Domain, Enabled: u.Enabled, CreatedAt: u.CreatedAt})
+		items = append(items, smtpUserJSON{
+			ID: u.ID, Username: u.Username, Domain: u.Domain, Enabled: u.Enabled,
+			WebmailAvailable: u.HasWebmail && s.webmailEnabled(), CreatedAt: u.CreatedAt,
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"users": items})
 }
@@ -69,13 +88,22 @@ func (s *Server) handleCreateSMTPUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "could not hash password")
 		return
 	}
-	id, err := s.pg.CreateSMTPUser(r.Context(), s.tenant(r), req.Username, hash, req.Domain)
+	sealed, err := s.sealSMTPPassword(req.Password)
+	if err != nil {
+		s.log.Error("seal smtp password", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "could not store credential")
+		return
+	}
+	id, err := s.pg.CreateSMTPUser(r.Context(), s.tenant(r), req.Username, hash, req.Domain, sealed)
 	if err != nil {
 		s.log.Error("create smtp user", "err", err)
 		writeError(w, http.StatusConflict, "conflict", "could not create smtp user (username may already exist)")
 		return
 	}
-	writeJSON(w, http.StatusCreated, smtpUserJSON{ID: id, Username: req.Username, Domain: req.Domain, Enabled: true})
+	writeJSON(w, http.StatusCreated, smtpUserJSON{
+		ID: id, Username: req.Username, Domain: req.Domain, Enabled: true,
+		WebmailAvailable: sealed != "" && s.webmailEnabled(),
+	})
 }
 
 type updateSMTPUserRequest struct {
@@ -109,7 +137,13 @@ func (s *Server) handleUpdateSMTPUser(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "internal", "could not hash password")
 			return
 		}
-		ok, err := s.pg.UpdateSMTPUserPassword(r.Context(), tenant, id, hash)
+		sealed, err := s.sealSMTPPassword(*req.Password)
+		if err != nil {
+			s.log.Error("seal smtp password", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal", "could not store credential")
+			return
+		}
+		ok, err := s.pg.UpdateSMTPUserPassword(r.Context(), tenant, id, hash, sealed)
 		if err != nil {
 			s.log.Error("update smtp user password", "err", err)
 			writeError(w, http.StatusInternalServerError, "internal", "could not update smtp user")

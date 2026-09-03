@@ -31,6 +31,32 @@ type Config struct {
 	AI          AIConfig          `yaml:"ai"`
 	Integration IntegrationConfig `yaml:"integration"`
 	DmarcPull   DmarcPullConfig   `yaml:"dmarcp"`
+	Webmail     WebmailConfig     `yaml:"webmail"`
+}
+
+// WebmailConfig wires the Roundcube autologin handoff (docs/webmail-autologin.md). apid
+// mints a single-use token for an SMTP user; the Roundcube mxs_autologin plugin redeems it
+// and is told which IMAP endpoint to log the user into. The feature is off unless BaseURL
+// and PluginSecret are both set.
+type WebmailConfig struct {
+	// BaseURL is the public Roundcube origin+path, e.g. https://sentinel.example.com/roundcube.
+	BaseURL string `yaml:"baseurl"`
+	// PluginSecret authenticates the Roundcube plugin to POST /v1/webmail/redeem. That
+	// endpoint sits outside the tenant auth pipeline (the plugin holds no API token), so
+	// this secret is the only thing standing between a leaked token and a redemption.
+	// Generate with: openssl rand -hex 32
+	PluginSecret string `yaml:"pluginsecret"`
+	// IMAPHost is the hostname Roundcube connects to for IMAP — resolved from ROUNDCUBE's
+	// network, not apid's. With Roundcube in Docker and Dovecot on the host that is usually
+	// host.docker.internal or the docker bridge gateway.
+	IMAPHost string `yaml:"imaphost"`
+	IMAPPort int    `yaml:"imapport"`
+	// IMAPTLS selects how Roundcube reaches IMAP: "starttls" (tls://, port 143),
+	// "tls" (ssl://, port 993), or "none" (plaintext — only sane over a private network).
+	IMAPTLS string `yaml:"imaptls"`
+	// TokenTTLSecs is how long a minted autologin token stays redeemable. Seconds, not
+	// minutes: the token travels from the dashboard to Roundcube in one redirect.
+	TokenTTLSecs int `yaml:"tokenttlsecs"`
 }
 
 // DmarcPullConfig configures the external DMARC receiver pull integration.
@@ -123,6 +149,12 @@ func Defaults() Config {
 			Model:       "llama3",
 			TimeoutSecs: 60,
 		},
+		Webmail: WebmailConfig{
+			IMAPHost:     "host.docker.internal",
+			IMAPPort:     143,
+			IMAPTLS:      "starttls",
+			TokenTTLSecs: 60,
+		},
 	}
 }
 
@@ -191,6 +223,17 @@ func applyEnv(c *Config) error {
 	}
 
 	setStr(&c.Integration.EncryptionKey, "MXS_ENCRYPTION_KEY")
+
+	setStr(&c.Webmail.BaseURL, "MXS_WEBMAIL_BASEURL")
+	setStr(&c.Webmail.PluginSecret, "MXS_WEBMAIL_PLUGINSECRET")
+	setStr(&c.Webmail.IMAPHost, "MXS_WEBMAIL_IMAPHOST")
+	setStr(&c.Webmail.IMAPTLS, "MXS_WEBMAIL_IMAPTLS")
+	if err := setInt(&c.Webmail.IMAPPort, "MXS_WEBMAIL_IMAPPORT"); err != nil {
+		return err
+	}
+	if err := setInt(&c.Webmail.TokenTTLSecs, "MXS_WEBMAIL_TOKENTTL"); err != nil {
+		return err
+	}
 
 	setStr(&c.DmarcPull.BaseURL, "MXS_DMARCP_BASEURL")
 	setStr(&c.DmarcPull.APIKey, "MXS_DMARCP_APIKEY")

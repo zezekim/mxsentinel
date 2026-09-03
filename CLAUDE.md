@@ -112,6 +112,7 @@ Next.js App Router (TypeScript). Points at `apid` via `NEXT_PUBLIC_API_TOKEN` (f
 
 - **Schemas are the contract.** Go types in `pkg/contracts` are generated from `schemas/events/*.json`. DB access is generated from `schemas/postgres`. Don't hand-write structs that duplicate schema definitions.
 - **Privacy at the parser boundary.** `internal/telemetry` extracts metadata and drops bodies before anything is published. Recipient addresses are hashed. Never store or log message bodies. **One deliberate exception:** the per-message report (`message_content` table, fed by `deploy/rspamd/mxs_trace.lua`) stores subject + raw headers for operator triage — isolated in its own table with a 30-day TTL, admin-scope-gated, and never read by the AI layer. See `docs/message-report.md`.
+- **Credentials are hashed, never readable — one deliberate exception.** `smtp_users.password_hash` is bcrypt and is never read back. Webmail autologin additionally stores `password_enc`, an AES-256-GCM sealed copy of the same password, because IMAP cannot authenticate against a hash. It is written *only* when `MXS_ENCRYPTION_KEY` is set (no key ⇒ NULL, and the feature reports itself unavailable — never a plaintext fallback), and unsealed in exactly one guarded path. See `docs/webmail-autologin.md`.
 - **Services are independently deployable.** No service reads another service's database directly — all cross-service communication goes through NATS or the API.
 - **Structured logging only** (`log/slog`), JSON in production. Every log line touching a tenant carries `tenant_id`; every event-handling line carries correlation keys.
 - **Mail delivery must never depend on MX Sentinel being up.** `telemetryd` spools to disk on bus outage. `rbld` fails open on total-listing so mail isn't halted.
@@ -140,5 +141,6 @@ Next.js App Router (TypeScript). Points at `apid` via `NEXT_PUBLIC_API_TOKEN` (f
 | `docs/bimi.md` | BIMI/VMC validation + readiness checklist |
 | `docs/message-report.md` | Per-message drill-down (envelope/spam/headers/timeline) + rspamd capture + privacy carve-out |
 | `docs/alert-channels.md` | Alert delivery channels (Slack/webhook/PagerDuty/email) |
+| `docs/webmail-autologin.md` | One-click Roundcube login for SMTP users: IMAP mailboxes on the relay, sealed password copy, single-use handoff token |
 | `docs/relay-failover.md` | Outbound failover: reroute throttled/blocked provider mail to a fallback smarthost (dashboard-managed; always-route or circuit breaker + host hook) |
 | `docs/settings-inventory.md` | Every config knob categorized: already-web / safe-to-move / must-stay-`.env` / must-stay-host, and the mechanism for web-managed settings |

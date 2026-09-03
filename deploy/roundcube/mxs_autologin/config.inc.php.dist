@@ -1,0 +1,15 @@
+<?php
+
+// mxs_autologin — copy to config.inc.php and fill in.
+// See docs/webmail-autologin.md.
+
+// Base URL of the MX Sentinel API as reached from the Roundcube container. Inside the
+// compose network that is the service name; there is no need to route this over the public
+// internet, and it should not be.
+$config['mxs_autologin_api'] = 'http://apid:8080';
+
+// Must match apid's MXS_WEBMAIL_PLUGINSECRET exactly. Generate with: openssl rand -hex 32
+$config['mxs_autologin_secret'] = '';
+
+// Seconds to wait for the redeem call before giving up and showing the login form.
+$config['mxs_autologin_timeout'] = 5;
