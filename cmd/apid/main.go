@@ -120,6 +120,30 @@ func run(addr, corsOrigin string, rateLimit int) error {
 		log.Info("public trace links enabled", "base_url", base)
 	}
 
+	// Viewer-facing hostname masking. On the white-label domain a viewer must not be able
+	// to tell who operates the relay, but the provider's hostnames run right through the
+	// telemetry, so apid rewrites them to stable aliases on the way out rather than
+	// blanking the data (internal/api/mask.go). Unset MXS_VIEWER_MASK_DOMAINS = disabled.
+	if raw := os.Getenv("MXS_VIEWER_MASK_DOMAINS"); strings.TrimSpace(raw) != "" {
+		base := os.Getenv("MXS_VIEWER_MASK_BASE")
+		if base == "" {
+			base = "example.net"
+		}
+		masker, merr := api.NewMasker(aliasAdapter{pg}, log, base, strings.FieldsFunc(raw,
+			func(r rune) bool { return r == ',' || r == ' ' }))
+		if merr != nil {
+			return fmt.Errorf("viewer mask: %w", merr)
+		}
+		if werr := masker.Warm(ctx); werr != nil {
+			// A cold cache is not fatal — aliases are re-read per host on demand — but it
+			// means the first response for each host pays a database round-trip.
+			log.Warn("viewer mask: could not preload aliases", "err", werr)
+		}
+		apiSrv = apiSrv.WithViewerMask(masker).WithPrimaryHost(os.Getenv("MXS_DOMAIN"))
+		log.Info("viewer hostname masking enabled",
+			"alias_base", base, "suffixes", raw, "primary_host", os.Getenv("MXS_DOMAIN"))
+	}
+
 	httpSrv := &http.Server{
 		Addr:              addr,
 		Handler:           apiSrv.Handler(),
@@ -140,4 +164,24 @@ func run(addr, corsOrigin string, rateLimit int) error {
 	sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return httpSrv.Shutdown(sctx)
+}
+
+// aliasAdapter bridges the Postgres store's row type to the api package's alias interface,
+// so internal/api stays testable against a fake instead of a live database.
+type aliasAdapter struct{ pg *pgstore.Store }
+
+func (a aliasAdapter) ListViewerAliases(ctx context.Context) ([]api.AliasRow, error) {
+	rows, err := a.pg.ListViewerAliases(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]api.AliasRow, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, api.AliasRow{RealHost: r.RealHost, Seq: r.Seq})
+	}
+	return out, nil
+}
+
+func (a aliasAdapter) AssignViewerAlias(ctx context.Context, host string) (int, error) {
+	return a.pg.AssignViewerAlias(ctx, host)
 }

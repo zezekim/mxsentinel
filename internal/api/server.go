@@ -23,6 +23,8 @@ type Server struct {
 	resolver      dnsx.Resolver
 	log           *slog.Logger
 	corsOrigin    string
+	masker        *Masker
+	primaryHost   string
 	limiter       Limiter           // nil disables rate limiting
 	sessions      auth.SessionStore // nil disables user login
 	enc           *crypto.Encryptor // nil = passthrough (plaintext credentials)
@@ -166,18 +168,34 @@ func (s *Server) Handler() http.Handler {
 	s.registerAlertChannelRoutes(mux) // alert delivery channels
 
 	// The authed pipeline: auth → rate limit (per tenant) → audit (records mutations).
-	authed := chain(mux, s.requireAuth, s.rateLimit, s.auditWrites)
+	authed := chain(mux, s.requireAuth, s.maskViewerResponses, s.rateLimit, s.auditWrites)
 
 	// Login is public (it issues tokens), so it sits outside requireAuth. The more
 	// specific pattern wins, so everything else falls through to the authed pipeline.
 	root := http.NewServeMux()
 	root.HandleFunc("POST /v1/auth/login", s.handleLogin)
-	root.HandleFunc("GET /v1/status/{slug}", s.handlePublicStatus)
-	root.HandleFunc("GET /v1/trace/{token}", s.handlePublicTrace)
+	// Public telemetry: masked when served on a white-label host (see maskPublicOnAliasHost).
+	root.Handle("GET /v1/status/{slug}", s.maskPublicOnAliasHost(http.HandlerFunc(s.handlePublicStatus)))
+	root.Handle("GET /v1/trace/{token}", s.maskPublicOnAliasHost(http.HandlerFunc(s.handlePublicTrace)))
 	root.Handle("/", authed)
 
 	// recoverer → logger → cors (handles preflight) → (login | authed routes)
 	return chain(root, s.recoverer, s.requestLogger, s.cors)
+}
+
+// WithViewerMask wires in the response masker that hides provider-owned hostnames from
+// viewer sessions (see mask.go). Passing nil leaves viewers seeing the raw data.
+func (s *Server) WithViewerMask(m *Masker) *Server {
+	s.masker = m
+	return s
+}
+
+// WithPrimaryHost records the operator's own dashboard hostname. Public endpoints served
+// on any OTHER hostname are treated as white-label and masked; without it they are never
+// masked, since there is nothing to compare against.
+func (s *Server) WithPrimaryHost(h string) *Server {
+	s.primaryHost = h
+	return s
 }
 
 // WithEncryptor wires in the credential encryptor. If not called, credentials are stored

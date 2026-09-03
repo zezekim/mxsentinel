@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
+import { API_BASE } from "@/lib/api-base";
 
 interface TenantInfo {
   name: string;
@@ -94,8 +95,7 @@ export default function StatusPage() {
 
   useEffect(() => {
     if (!slug) return;
-    const base = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8080";
-    const url = `${base}/v1/status/${slug}`;
+    const url = `${API_BASE}/v1/status/${slug}`;
 
     fetch(url)
       .then(async (res) => {

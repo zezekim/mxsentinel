@@ -1,12 +1,16 @@
 # MX Sentinel reverse proxy. Caddy obtains and renews TLS certs automatically for
 # {$MXS_DOMAIN} via Let's Encrypt (the domain must resolve to this host and 80/443 must be
 # reachable). Single origin: /v1/* -> API, everything else -> dashboard.
+#
+# MXS_EXTRA_DOMAINS holds any additional hostnames the same dashboard answers on (space
+# separated, e.g. a white-label domain). Each gets its own cert, so each must resolve here
+# too. Leave it empty for a single-domain install.
 
 {
 	email {$MXS_ACME_EMAIL}
 }
 
-{$MXS_DOMAIN} {
+{$MXS_DOMAIN} {$MXS_EXTRA_DOMAINS} {
 	encode gzip
 
 	# REST API
