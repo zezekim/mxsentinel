@@ -3,8 +3,8 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { getToken } from "@/lib/api";
 import LoadingError from "@/components/LoadingError";
+import { API_BASE } from "@/lib/api-base";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8080";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

@@ -2,8 +2,8 @@
 // @/lib/api (do not edit that module) and talks to the apid /v1/seed-* endpoints.
 
 import { getToken } from "@/lib/api";
+import { API_BASE } from "@/lib/api-base";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8080";
 
 function authHeaders(): HeadersInit {
   const token = getToken();

@@ -22,6 +22,8 @@ services:
       - "443:443"
     environment:
       MXS_DOMAIN: "${MXS_DOMAIN:?set MXS_DOMAIN in deploy/.env}"
+      # Optional extra hostnames for the same site (space separated). Empty = single domain.
+      MXS_EXTRA_DOMAINS: "${MXS_EXTRA_DOMAINS:-}"
       MXS_ACME_EMAIL: "${MXS_ACME_EMAIL:?set MXS_ACME_EMAIL in deploy/.env}"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
@@ -31,12 +33,14 @@ services:
       - apid
       - dashboard
 
-  # Bake the public API base into the dashboard build (it's served same-origin behind
-  # Caddy, so the browser calls https://<domain>/v1/...).
+  # The dashboard is served same-origin behind Caddy, so the browser should call
+  # /v1/... on whatever hostname served the page (see web/lib/api-base.ts). That is what
+  # lets MXS_EXTRA_DOMAINS work from one build — an absolute base would pin every request
+  # back to MXS_DOMAIN, so a white-label domain would still call the primary one.
   dashboard:
     build:
       args:
-        NEXT_PUBLIC_API_BASE: "https://${MXS_DOMAIN:?set MXS_DOMAIN in deploy/.env}"
+        NEXT_PUBLIC_API_BASE: "same-origin"
 
 volumes:
   caddydata:

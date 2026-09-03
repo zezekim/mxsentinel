@@ -16,8 +16,8 @@ import TrendChart from "./TrendChart";
 import TopSources from "./TopSources";
 import Threats from "./Threats";
 import PolicyAdvisor from "./PolicyAdvisor";
+import { API_BASE } from "@/lib/api-base";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8080";
 
 function fmt(ts: string): string {
   if (!ts) return "—";

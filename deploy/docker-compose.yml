@@ -23,6 +23,16 @@ x-app-env: &app-env
   # API returns relative /trace paths and the dashboard composes its own origin; set it to make
   # apid emit absolute URLs (also used by `mxctl message share`). e.g. https://sentinel.squidix.net
   MXS_PUBLIC_BASE_URL: "${MXS_PUBLIC_BASE_URL:-}"
+  # Viewer-role white-labelling. Hostnames under these suffixes are rewritten to stable
+  # aliases (relay-01.<base>, relay-02.<base>, …) in every response served to a viewer
+  # session, so the white-label domain never reveals who runs the relay. Comma or space
+  # separated; empty disables masking entirely. See internal/api/mask.go.
+  MXS_VIEWER_MASK_DOMAINS: "${MXS_VIEWER_MASK_DOMAINS:-}"
+  MXS_VIEWER_MASK_BASE: "${MXS_VIEWER_MASK_BASE:-}"
+  # The operator's own dashboard hostname. Public endpoints (/v1/status, /v1/trace) carry
+  # no role, so masking them is decided by the Host header: requests on any OTHER hostname
+  # are treated as white-label and masked.
+  MXS_DOMAIN: "${MXS_DOMAIN:-}"
   MXS_POSTGRES_DSN: "postgres://${PG_USER:-mxsentinel}:${PG_PASSWORD:-mxsentinel}@postgres:5432/${PG_DB:-mxsentinel}?sslmode=disable"
   MXS_CLICKHOUSE_ADDR: "clickhouse:9000"
   MXS_CLICKHOUSE_DATABASE: "${CH_DB:-mxsentinel}"
