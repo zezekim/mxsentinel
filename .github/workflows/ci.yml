@@ -99,3 +99,17 @@ jobs:
           for f in schemas/events/*.json; do
             python3 -c "import json,sys; json.load(open('$f'))" && echo "ok: $f"
           done
+
+  # Runs on the self-hosted runner living on the VPS itself (see docs/deploy-vps.md), only
+  # after every other job above has passed and only for a real push to main — never for
+  # pull_request builds. No checkout: it drives deploy/self-update.sh directly against the
+  # live /opt/mxsentinel checkout, which does its own git fetch/reset, rebuild, health-check,
+  # and automatic rollback if the new commit doesn't come up healthy.
+  deploy:
+    name: deploy
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [go, lint, web, docker, schema-lint]
+    runs-on: [self-hosted, mxsentinel-deploy]
+    steps:
+      - name: Deploy via self-update.sh
+        run: MXS_UPDATE_BRANCH=main /opt/mxsentinel/deploy/self-update.sh
