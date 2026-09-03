@@ -34,6 +34,11 @@ coverage.*
 /dmarc-drop/
 telemetry-spool.ndjson
 
+# relayfailoverd live state (host-specific; carries the smarthost SASL password)
+/deploy/failover-state/*
+!/deploy/failover-state/.gitkeep
+/deploy/hooks/.failover-applied
+
 # Frontend (Next.js)
 /web/node_modules/
 /web/.next/

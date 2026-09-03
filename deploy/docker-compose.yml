@@ -76,6 +76,7 @@ x-app: &app
 services:
   postgres:
     image: postgres:16
+    restart: unless-stopped
     environment:
       POSTGRES_USER: "${PG_USER:-mxsentinel}"
       POSTGRES_PASSWORD: "${PG_PASSWORD:-mxsentinel}"
@@ -92,6 +93,7 @@ services:
 
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
+    restart: unless-stopped
     environment:
       CLICKHOUSE_DB: "${CH_DB:-mxsentinel}"
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
@@ -112,8 +114,10 @@ services:
 
   redis:
     image: redis:7
-    ports:
-      - "127.0.0.1:6379:6379"
+    restart: unless-stopped
+    # No host port publish: app services reach this over the compose network as
+    # "redis:6379" (MXS_REDIS_ADDR). Host 127.0.0.1:6379 belongs to the system
+    # redis-server that rspamd uses (see install.sh), so publishing here collides.
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -124,6 +128,7 @@ services:
     # alpine variant has a shell + busybox wget; the default nats image is FROM scratch
     # (no shell/wget), so a CMD-SHELL healthcheck can't run there.
     image: nats:2.10-alpine
+    restart: unless-stopped
     command: ["-js", "-sd", "/data", "-m", "8222"]
     ports:
       - "127.0.0.1:4222:4222"   # client
@@ -138,6 +143,7 @@ services:
 
   minio:
     image: minio/minio:latest
+    restart: unless-stopped
     command: server /data --console-address ":9090"
     environment:
       MINIO_ROOT_USER: "${MINIO_ROOT_USER:-minioadmin}"
@@ -173,6 +179,9 @@ services:
       migrate: {condition: service_completed_successfully}
       postgres: {condition: service_healthy}
       clickhouse: {condition: service_healthy}
+      # apid wires the Redis session store once, at startup: if Redis is not
+      # reachable then, user login stays disabled for the life of the process.
+      redis: {condition: service_healthy}
 
   dnsd:
     <<: *app
@@ -447,6 +456,9 @@ services:
       args:
         NEXT_PUBLIC_API_BASE: "http://localhost:8080"
     image: mxsentinel-dashboard:local
+    # Not covered by the x-app anchor (own build), so it needs its own policy —
+    # without it a host reboot leaves the UI down and Caddy serves 502.
+    restart: unless-stopped
     profiles: ["app"]
     ports:
       - "127.0.0.1:3000:3000"
