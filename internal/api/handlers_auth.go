@@ -39,8 +39,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "login failed")
 		return
 	}
-	// Generic error regardless of which check fails, to avoid user enumeration.
+	// Generic error regardless of which check fails, to avoid user enumeration. The log
+	// line is the operator-side counterpart: a burst of these from one address is the first
+	// visible sign of a credential-stuffing run against the dashboard.
 	if !found || u.Status == "disabled" || u.PasswordHash == "" || !auth.CheckPassword(u.PasswordHash, req.Password) {
+		s.log.Warn("login failed", "email", req.Email,
+			"client_ip", clientIP(r), "country", clientCountry(r))
 		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid credentials")
 		return
 	}
@@ -52,6 +56,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "could not start session")
 		return
 	}
+	s.log.Info("login", "user_id", u.ID, "tenant_id", u.TenantID, "role", u.Role,
+		"client_ip", clientIP(r), "country", clientCountry(r))
+
+	// Best-effort security notification to the tenant's login-alert channels (Telegram,
+	// Slack, …) for viewer-account sign-ins. Asynchronous — it never blocks or fails the
+	// login. See login_alerts.go.
+	s.notifyLogin(r, u)
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token":      token,
 		"expires_at": time.Now().Add(sessionTTL).UTC().Format(time.RFC3339),

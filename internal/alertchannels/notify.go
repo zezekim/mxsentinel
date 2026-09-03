@@ -1,7 +1,7 @@
 // Package alertchannels implements outbound alert delivery for MX Sentinel. A firing
 // alert or incident is fanned out to a tenant's enabled notification channels — Slack
 // (incoming webhook), a generic webhook (POST JSON with an optional HMAC signature),
-// PagerDuty (Events API v2), and email.
+// PagerDuty (Events API v2), email, and Telegram (Bot API sendMessage).
 //
 // Design:
 //   - Each channel driver (Notifier) turns a Notification + channel config into a request
@@ -32,6 +32,7 @@ const (
 	TypeWebhook   = "webhook"
 	TypePagerDuty = "pagerduty"
 	TypeEmail     = "email"
+	TypeTelegram  = "telegram"
 )
 
 // ValidTypes is the set of accepted channel types.
@@ -40,6 +41,7 @@ var ValidTypes = map[string]bool{
 	TypeWebhook:   true,
 	TypePagerDuty: true,
 	TypeEmail:     true,
+	TypeTelegram:  true,
 }
 
 // Notification is the tenant-facing, body-free description of a firing alert/incident that
@@ -55,6 +57,10 @@ type Notification struct {
 	LinkURL    string    // deep link back into the dashboard, may be ""
 	OccurredAt time.Time // when the underlying signal fired
 	Test       bool      // true for the "send test notification" action
+	// SkipSuppression delivers the notification even if the channel is inside its throttle
+	// window. Set for events that are individually meaningful and must never be swallowed
+	// by a flapping incident — a dashboard login is one (see LoginNotification).
+	SkipSuppression bool
 }
 
 // HTTPRequest is a fully-rendered outbound HTTP request produced by a driver's pure build
@@ -120,6 +126,34 @@ func cfgString(cfg map[string]any, key string) string {
 		return v
 	}
 	return ""
+}
+
+// cfgBool safely reads a boolean field from a decoded config map. JSON booleans and the
+// strings "true"/"1" both count as true, since config can be hand-edited or posted by a
+// form that stringifies its values.
+func cfgBool(cfg map[string]any, key string) bool {
+	if cfg == nil {
+		return false
+	}
+	switch v := cfg[key].(type) {
+	case bool:
+		return v
+	case string:
+		return v == "true" || v == "1"
+	}
+	return false
+}
+
+// cfgBoolDefault is cfgBool with an explicit default for an absent key, so a flag can
+// default to true without every existing channel config having to spell it out.
+func cfgBoolDefault(cfg map[string]any, key string, def bool) bool {
+	if cfg == nil {
+		return def
+	}
+	if _, present := cfg[key]; !present {
+		return def
+	}
+	return cfgBool(cfg, key)
 }
 
 // cfgStringSlice reads a []string field from a decoded config map. Accepts both a JSON

@@ -95,3 +95,51 @@ func TestRedactEmailHasNoSecrets(t *testing.T) {
 		t.Errorf("email recipients should not be redacted: %s", red)
 	}
 }
+
+// A dashboard PATCH echoes the config back as the API rendered it — secrets redacted. The
+// stored secret must survive that round-trip; only a genuinely new value replaces it.
+func TestPreserveRedactedSecrets(t *testing.T) {
+	enc := (*crypto.Encryptor)(nil) // passthrough: values stored as plaintext
+	stored := []byte(`{"bot_token":"123:ABC","chat_id":"-100"}`)
+
+	tests := []struct {
+		name     string
+		incoming string
+		want     string
+	}{
+		{"redacted keeps stored token", `{"bot_token":"***","chat_id":"-100","login_alerts":true}`, "123:ABC"},
+		{"absent keeps stored token", `{"chat_id":"-100"}`, "123:ABC"},
+		{"empty keeps stored token", `{"bot_token":""}`, "123:ABC"},
+		{"new value wins", `{"bot_token":"999:XYZ"}`, "999:XYZ"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := PreserveRedactedSecrets(enc, TypeTelegram, []byte(tc.incoming), stored)
+			if err != nil {
+				t.Fatalf("preserve: %v", err)
+			}
+			m, err := DecodeConfig(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if m["bot_token"] != tc.want {
+				t.Errorf("bot_token = %v, want %v", m["bot_token"], tc.want)
+			}
+		})
+	}
+
+	// Non-secret fields are passed through untouched.
+	out, err := PreserveRedactedSecrets(enc, TypeTelegram,
+		[]byte(`{"bot_token":"***","login_alerts":true}`), stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _ := DecodeConfig(out)
+	if m["login_alerts"] != true {
+		t.Errorf("login_alerts lost: %s", out)
+	}
+	// A type with no secrets short-circuits.
+	if got, _ := PreserveRedactedSecrets(enc, TypeEmail, []byte(`{"to":["a@b.c"]}`), nil); string(got) != `{"to":["a@b.c"]}` {
+		t.Errorf("email config should pass through unchanged, got %s", got)
+	}
+}

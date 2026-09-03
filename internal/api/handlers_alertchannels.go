@@ -89,7 +89,7 @@ func (s *Server) handleCreateAlertChannel(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if !alertchannels.ValidTypes[body.Type] {
-		writeError(w, http.StatusBadRequest, "invalid_type", "type must be one of: slack, webhook, pagerduty, email")
+		writeError(w, http.StatusBadRequest, "invalid_type", "type must be one of: slack, webhook, pagerduty, email, telegram")
 		return
 	}
 	if len(body.Config) == 0 {
@@ -146,9 +146,16 @@ func (s *Server) handleUpdateAlertChannel(w http.ResponseWriter, r *http.Request
 	}
 
 	// Only re-seal config when the caller supplies a new one; otherwise leave it untouched.
+	// Secret fields still carrying the "***" redaction marker keep their stored value, so a
+	// dashboard round-trip (e.g. flipping login_alerts) cannot blank out a bot token.
 	var sealed []byte
 	if body.Config != nil {
-		sealed, err = alertchannels.SealConfig(s.enc, existing.Type, []byte(*body.Config))
+		merged, mErr := alertchannels.PreserveRedactedSecrets(s.enc, existing.Type, []byte(*body.Config), existing.Config)
+		if mErr != nil {
+			writeError(w, http.StatusBadRequest, "invalid_config", mErr.Error())
+			return
+		}
+		sealed, err = alertchannels.SealConfig(s.enc, existing.Type, merged)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_config", err.Error())
 			return

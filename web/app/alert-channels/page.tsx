@@ -13,6 +13,10 @@ import {
   buildChannelConfig,
   channelTypeLabel,
   primaryFieldLabel,
+  loginAlertsOn,
+  setLoginAlerts,
+  incidentAlertsOn,
+  setIncidentAlerts,
 } from "@/lib/api-alertchannels";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -29,15 +33,17 @@ function fmtDate(ts: string | null): string {
 function typeDotColor(type: ChannelType): string {
   switch (type) {
     case "email":
-      return "#60a5fa";
+      return "#005eb8";
     case "slack":
-      return "#a78bfa";
+      return "#4c2c92";
     case "webhook":
-      return "#34d399";
+      return "#006435";
     case "pagerduty":
-      return "#f87171";
+      return "#b3271c";
+    case "telegram":
+      return "#2aabee";
     default:
-      return "#9ca3af";
+      return "#62727e";
   }
 }
 
@@ -72,6 +78,9 @@ function NewChannelForm({
   const [type, setType] = useState<ChannelType>("slack");
   const [primary, setPrimary] = useState("");
   const [signingSecret, setSigningSecret] = useState("");
+  const [chatId, setChatId] = useState("");
+  const [notifyLogins, setNotifyLogins] = useState(false);
+  const [notifyIncidents, setNotifyIncidents] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -83,7 +92,12 @@ function NewChannelForm({
     createAlertChannel({
       type,
       name: name.trim(),
-      config: buildChannelConfig(type, primary.trim(), { signingSecret: signingSecret.trim() }),
+      config: buildChannelConfig(type, primary.trim(), {
+        signingSecret: signingSecret.trim(),
+        chatId: chatId.trim(),
+        loginAlerts: notifyLogins,
+        incidentAlerts: notifyIncidents,
+      }),
     })
       .then(() => onCreated())
       .catch((err: unknown) => {
@@ -111,6 +125,7 @@ function NewChannelForm({
           <option value="webhook">Webhook</option>
           <option value="pagerduty">PagerDuty</option>
           <option value="email">Email</option>
+          <option value="telegram">Telegram</option>
         </select>
       </div>
       <div className="inline-form-row">
@@ -122,6 +137,18 @@ function NewChannelForm({
           placeholder={primaryFieldLabel(type)}
         />
       </div>
+      {type === "telegram" && (
+        <div className="inline-form-row">
+          <label>Chat ID</label>
+          <input
+            type="text"
+            value={chatId}
+            onChange={(e) => setChatId(e.target.value)}
+            placeholder="-1001234567890 or @channelname"
+            required
+          />
+        </div>
+      )}
       {type === "webhook" && (
         <div className="inline-form-row">
           <label>Signing Secret (optional)</label>
@@ -133,6 +160,28 @@ function NewChannelForm({
           />
         </div>
       )}
+      <div className="inline-form-row">
+        <label>Login alerts</label>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontWeight: 400 }}>
+          <input
+            type="checkbox"
+            checked={notifyLogins}
+            onChange={(e) => setNotifyLogins(e.target.checked)}
+          />
+          Notify this channel when the viewer account signs in
+        </label>
+      </div>
+      <div className="inline-form-row">
+        <label>Incident alerts</label>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontWeight: 400 }}>
+          <input
+            type="checkbox"
+            checked={notifyIncidents}
+            onChange={(e) => setNotifyIncidents(e.target.checked)}
+          />
+          Also send firing incidents here (uncheck for a login-only channel)
+        </label>
+      </div>
       {error && (
         <p className="state-msg error" style={{ margin: "0.25rem 0" }}>
           Error: {error}
@@ -173,6 +222,26 @@ export default function AlertChannelsPage() {
     fetchChannels();
   }, [fetchChannels]);
 
+  function handleToggleLoginAlerts(ch: AlertChannel) {
+    setBusyId(ch.id);
+    setLoginAlerts(ch, !loginAlertsOn(ch))
+      .then(() => fetchChannels())
+      .catch((e: unknown) =>
+        setTestResult({ id: ch.id, ok: false, msg: e instanceof Error ? e.message : String(e) }),
+      )
+      .finally(() => setBusyId(null));
+  }
+
+  function handleToggleIncidentAlerts(ch: AlertChannel) {
+    setBusyId(ch.id);
+    setIncidentAlerts(ch, !incidentAlertsOn(ch))
+      .then(() => fetchChannels())
+      .catch((e: unknown) =>
+        setTestResult({ id: ch.id, ok: false, msg: e instanceof Error ? e.message : String(e) }),
+      )
+      .finally(() => setBusyId(null));
+  }
+
   function handleToggle(ch: AlertChannel) {
     setBusyId(ch.id);
     updateAlertChannel(ch.id, { enabled: !ch.enabled })
@@ -204,10 +273,12 @@ export default function AlertChannelsPage() {
   return (
     <>
       <h1>Alert Channels</h1>
-      <p style={{ color: "#9ca3af", fontSize: "0.9rem", marginTop: "-0.5rem" }}>
+      <p style={{ color: "#62727e", fontSize: "0.9rem", marginTop: "-0.5rem" }}>
         Delivery destinations for firing alerts and incidents. Secrets are encrypted at rest
         and shown redacted. Per-channel throttling stops a flapping alert from spamming a
-        destination.
+        destination. The two feeds are independent: <strong>login alerts</strong> messages the
+        channel every time the viewer account signs in, <strong>incidents</strong> carries the
+        firing alert/incident feed. Turn incidents off for a login-only channel.
       </p>
 
       <div className="section-block">
@@ -244,6 +315,8 @@ export default function AlertChannelsPage() {
                       <th>Name</th>
                       <th>Type</th>
                       <th>Status</th>
+                      <th>Login alerts</th>
+                      <th>Incidents</th>
                       <th>Created</th>
                       <th></th>
                     </tr>
@@ -258,7 +331,7 @@ export default function AlertChannelsPage() {
                               style={{
                                 fontSize: "0.75rem",
                                 marginTop: "0.25rem",
-                                color: testResult.ok ? "#34d399" : "#f87171",
+                                color: testResult.ok ? "#006435" : "#b3271c",
                               }}
                             >
                               {testResult.msg}
@@ -272,6 +345,34 @@ export default function AlertChannelsPage() {
                           <span className={`badge ${ch.enabled ? "badge-ok" : "badge-unknown"}`}>
                             {ch.enabled ? "enabled" : "disabled"}
                           </span>
+                        </td>
+                        <td>
+                          <button
+                            className={`toggle-btn ${loginAlertsOn(ch) ? "toggle-on" : "toggle-off"}`}
+                            onClick={() => handleToggleLoginAlerts(ch)}
+                            disabled={busyId === ch.id}
+                            title={
+                              loginAlertsOn(ch)
+                                ? "Stop notifying this channel on viewer sign-in"
+                                : "Notify this channel when the viewer account signs in"
+                            }
+                          >
+                            {loginAlertsOn(ch) ? "On" : "Off"}
+                          </button>
+                        </td>
+                        <td>
+                          <button
+                            className={`toggle-btn ${incidentAlertsOn(ch) ? "toggle-on" : "toggle-off"}`}
+                            onClick={() => handleToggleIncidentAlerts(ch)}
+                            disabled={busyId === ch.id}
+                            title={
+                              incidentAlertsOn(ch)
+                                ? "Stop sending firing incidents here"
+                                : "Send firing incidents here"
+                            }
+                          >
+                            {incidentAlertsOn(ch) ? "On" : "Off"}
+                          </button>
                         </td>
                         <td style={{ whiteSpace: "nowrap", fontSize: "0.85rem" }}>
                           {fmtDate(ch.created_at)}

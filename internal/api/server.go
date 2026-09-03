@@ -28,6 +28,7 @@ type Server struct {
 	enc           *crypto.Encryptor // nil = passthrough (plaintext credentials)
 	publicBaseURL string            // e.g. https://sentinel.squidix.net; "" → return relative /trace paths
 	nlMaxTools    int               // dashboard override for nlquery MaxTools; 0 = use env/default
+	loginAlerts   loginDispatcher   // lazily-built fan-out for sign-in notifications
 }
 
 // New constructs the API server. corsOrigin is the Access-Control-Allow-Origin value

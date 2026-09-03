@@ -3,7 +3,7 @@
 
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api";
 
-export type ChannelType = "slack" | "webhook" | "pagerduty" | "email";
+export type ChannelType = "slack" | "webhook" | "pagerduty" | "email" | "telegram";
 
 export interface AlertChannel {
   id: string;
@@ -43,6 +43,30 @@ export function deleteAlertChannel(id: string): Promise<{ ok: boolean }> {
   return apiDelete<{ ok: boolean }>(`/v1/alert-channels/${id}`);
 }
 
+// loginAlertsOn reads the non-secret opt-in flag off a channel's config.
+export function loginAlertsOn(ch: AlertChannel): boolean {
+  return ch.config?.login_alerts === true || ch.config?.login_alerts === "true";
+}
+
+// incidentAlertsOn reports whether the channel receives the firing-incident feed. Absent
+// flag = on, matching the server default, so channels predating the flag read as on.
+export function incidentAlertsOn(ch: AlertChannel): boolean {
+  const v = ch.config?.incident_alerts;
+  return v === undefined || v === null || v === true || v === "true";
+}
+
+// setIncidentAlerts flips the incident-feed flag. Secrets stay redacted in the round-trip;
+// the server keeps their stored values.
+export function setIncidentAlerts(ch: AlertChannel, on: boolean): Promise<{ ok: boolean }> {
+  return updateAlertChannel(ch.id, { config: { ...ch.config, incident_alerts: on } });
+}
+
+// setLoginAlerts flips the opt-in flag. The config is sent back as the API rendered it —
+// secrets stay redacted ("***") and the server keeps their stored values.
+export function setLoginAlerts(ch: AlertChannel, on: boolean): Promise<{ ok: boolean }> {
+  return updateAlertChannel(ch.id, { config: { ...ch.config, login_alerts: on } });
+}
+
 export function testAlertChannel(id: string): Promise<{ ok: boolean; status: string }> {
   return apiPost<{ ok: boolean; status: string }>(`/v1/alert-channels/${id}/test`, {});
 }
@@ -52,7 +76,25 @@ export function testAlertChannel(id: string): Promise<{ ok: boolean; status: str
 export function buildChannelConfig(
   type: ChannelType,
   primary: string,
-  extra: { signingSecret?: string; recipients?: string },
+  extra: {
+    signingSecret?: string;
+    recipients?: string;
+    chatId?: string;
+    loginAlerts?: boolean;
+    incidentAlerts?: boolean;
+  },
+): Record<string, unknown> {
+  const cfg = buildTypeConfig(type, primary, extra);
+  // Non-secret routing flags: which feeds this channel carries.
+  if (extra.loginAlerts) cfg.login_alerts = true;
+  if (extra.incidentAlerts === false) cfg.incident_alerts = false;
+  return cfg;
+}
+
+function buildTypeConfig(
+  type: ChannelType,
+  primary: string,
+  extra: { signingSecret?: string; recipients?: string; chatId?: string },
 ): Record<string, unknown> {
   switch (type) {
     case "slack":
@@ -64,6 +106,8 @@ export function buildChannelConfig(
     }
     case "pagerduty":
       return { routing_key: primary };
+    case "telegram":
+      return { bot_token: primary, chat_id: extra.chatId ?? "" };
     case "email":
       return {
         to: (extra.recipients ?? primary)
@@ -86,6 +130,8 @@ export function channelTypeLabel(type: ChannelType): string {
       return "PagerDuty";
     case "email":
       return "Email";
+    case "telegram":
+      return "Telegram";
     default:
       return type;
   }
@@ -101,6 +147,8 @@ export function primaryFieldLabel(type: ChannelType): string {
       return "Integration (Routing) Key";
     case "email":
       return "Recipient address(es), comma-separated";
+    case "telegram":
+      return "Bot Token (from @BotFather)";
     default:
       return "URL";
   }

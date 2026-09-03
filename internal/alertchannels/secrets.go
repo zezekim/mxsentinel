@@ -14,6 +14,7 @@ var secretFields = map[string][]string{
 	TypeSlack:     {"webhook_url"},
 	TypeWebhook:   {"signing_secret"},
 	TypePagerDuty: {"routing_key"},
+	TypeTelegram:  {"bot_token"},
 }
 
 // SecretFields returns the sensitive config keys for a channel type.
@@ -49,8 +50,53 @@ func RedactConfig(chType string, raw []byte) ([]byte, error) {
 		if v == "" {
 			return "", nil
 		}
-		return "***", nil
+		return RedactedValue, nil
 	})
+}
+
+// RedactedValue is what RedactConfig substitutes for a set secret. A config posted back by
+// the dashboard carries it verbatim, which PreserveRedactedSecrets resolves.
+const RedactedValue = "***"
+
+// PreserveRedactedSecrets returns incoming config JSON with every secret field that still
+// holds the redaction marker (or is absent) replaced by the value currently stored in
+// existing (sealed) config, decrypted via enc. The result is plaintext, ready for
+// SealConfig.
+//
+// Without this, a PATCH that echoes back a channel as the API returned it — which is
+// exactly what a dashboard toggle does — would overwrite the Slack webhook URL or the
+// Telegram bot token with "***".
+func PreserveRedactedSecrets(enc *crypto.Encryptor, chType string, incoming, existing []byte) ([]byte, error) {
+	fields := secretFields[chType]
+	if len(fields) == 0 {
+		return incoming, nil
+	}
+	prev, err := OpenConfig(enc, chType, existing)
+	if err != nil {
+		return nil, err
+	}
+	prevMap, err := DecodeConfig(prev)
+	if err != nil {
+		return nil, err
+	}
+	m, err := DecodeConfig(incoming)
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range fields {
+		v, ok := m[f].(string)
+		if ok && v != "" && v != RedactedValue {
+			continue // caller supplied a genuinely new secret
+		}
+		if old, ok := prevMap[f].(string); ok && old != "" {
+			m[f] = old
+		}
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return nil, fmt.Errorf("marshal config: %w", err)
+	}
+	return out, nil
 }
 
 // DecodeConfig unmarshals config JSON into a map for a driver.

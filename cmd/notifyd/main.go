@@ -200,6 +200,17 @@ func (w *worker) loadChannels(ctx context.Context, tenantID string) []alertchann
 			w.log.Warn("decrypt channel config", "tenant_id", tenantID, "channel_id", c.ID, "err", err)
 			continue
 		}
+		// A channel can opt out of the incident feed ("incident_alerts": false) — e.g. a
+		// Telegram bot that should only ever carry viewer login notifications, which apid
+		// delivers on its own path. Absent flag means opted in.
+		cfg, err := alertchannels.DecodeConfig(plain)
+		if err != nil {
+			w.log.Warn("decode channel config", "tenant_id", tenantID, "channel_id", c.ID, "err", err)
+			continue
+		}
+		if !alertchannels.IncidentAlertsEnabled(cfg) {
+			continue
+		}
 		out = append(out, alertchannels.Channel{
 			ID:       c.ID,
 			TenantID: c.TenantID,
