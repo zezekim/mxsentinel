@@ -91,7 +91,11 @@ func (s *Store) QueryMessages(ctx context.Context, f MessageFilter) ([]MessageRo
 		args = append(args, f.Until)
 	}
 
-	sb.WriteString(" ORDER BY event_time DESC LIMIT ?")
+	// event_id breaks ties so the order is a total one. event_time alone is not:
+	// events sharing a timestamp could come back in any relative order, and with
+	// LIMIT/OFFSET paging that means a row at a page boundary is liable to repeat on
+	// the next page or be skipped entirely.
+	sb.WriteString(" ORDER BY event_time DESC, event_id DESC LIMIT ?")
 	args = append(args, limit)
 	if f.Offset > 0 {
 		sb.WriteString(" OFFSET ?")
