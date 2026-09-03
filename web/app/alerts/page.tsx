@@ -108,15 +108,15 @@ function signalColor(signal: SignalType): string {
 function kindDotColor(kind: ChannelKind): string {
   switch (kind) {
     case "email":
-      return "#60a5fa";
+      return "#005eb8";
     case "slack":
-      return "#a78bfa";
+      return "#4c2c92";
     case "webhook":
-      return "#34d399";
+      return "#006435";
     case "pagerduty":
-      return "#f87171";
+      return "#b3271c";
     default:
-      return "#9ca3af";
+      return "#62727e";
   }
 }
 
@@ -453,7 +453,7 @@ function AlertRulesSection() {
                       <td>
                         <SignalBadge signal={rule.signal} />
                       </td>
-                      <td style={{ fontSize: "0.85rem", color: "#9ca3af" }}>
+                      <td style={{ fontSize: "0.85rem", color: "#62727e" }}>
                         {rule.threshold != null
                           ? `≥ ${rule.threshold}%`
                           : "Any"}
@@ -680,7 +680,7 @@ function AlertEventsSection() {
                           textOverflow: "ellipsis",
                           whiteSpace: "nowrap",
                           fontSize: "0.8rem",
-                          color: "#9ca3af",
+                          color: "#62727e",
                         }}
                         title={JSON.stringify(ev.payload)}
                       >

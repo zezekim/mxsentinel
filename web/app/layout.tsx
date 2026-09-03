@@ -1,10 +1,18 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import AppShell from "@/components/AppShell";
 
 export const metadata: Metadata = {
-  title: "MX Sentinel",
+  title: {
+    default: "MX Sentinel",
+    template: "%s — MX Sentinel",
+  },
   description: "Email infrastructure observability",
+};
+
+// Matches the masthead so mobile browser chrome sits flush with the service.
+export const viewport: Viewport = {
+  themeColor: "#26374a",
 };
 
 export default function RootLayout({
