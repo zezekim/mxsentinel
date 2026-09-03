@@ -60,6 +60,37 @@ func ShareTokenPrefixOf(token string) string {
 	return parts[0] + "_" + parts[1]
 }
 
+// Webmail autologin tokens look like:  mxw_<8 hex>_<40 hex>
+// Same construction again, with a third scheme so a webmail handoff token can never be
+// mistaken for an API token or a share link. These are single-use and live for seconds, but
+// the 160-bit secret still makes guessing one hopeless. See docs/webmail-autologin.md.
+const webmailTokenScheme = "mxw"
+
+// GenerateWebmailToken returns a new autologin token, its lookup prefix, and the hash to store.
+func GenerateWebmailToken() (token, prefix, hash string, err error) {
+	pb := make([]byte, 4)  // 8 hex chars of prefix
+	sb := make([]byte, 20) // 40 hex chars of secret
+	if _, err = rand.Read(pb); err != nil {
+		return "", "", "", fmt.Errorf("read random: %w", err)
+	}
+	if _, err = rand.Read(sb); err != nil {
+		return "", "", "", fmt.Errorf("read random: %w", err)
+	}
+	prefix = webmailTokenScheme + "_" + hex.EncodeToString(pb)
+	token = prefix + "_" + hex.EncodeToString(sb)
+	return token, prefix, HashToken(token), nil
+}
+
+// WebmailTokenPrefixOf extracts the lookup prefix ("mxw_<8 hex>") from an autologin token,
+// or "" if it is malformed or belongs to another token scheme.
+func WebmailTokenPrefixOf(token string) string {
+	parts := strings.SplitN(token, "_", 3)
+	if len(parts) != 3 || parts[0] != webmailTokenScheme || parts[1] == "" {
+		return ""
+	}
+	return parts[0] + "_" + parts[1]
+}
+
 // HashToken returns the hex SHA-256 of a token.
 func HashToken(token string) string {
 	sum := sha256.Sum256([]byte(token))

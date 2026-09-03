@@ -10,24 +10,31 @@ import (
 
 // SMTPUser is a projection of the smtp_users table. PasswordHash is never read back
 // (it is only ever written); the relay's Dovecot passdb reads it directly from Postgres.
+// HasWebmail reports whether a sealed password copy exists (password_enc IS NOT NULL), i.e.
+// whether webmail autologin can be offered for this user — the ciphertext itself is only
+// read by GetSMTPUserWebmailCredential at redeem time.
 type SMTPUser struct {
-	ID        string
-	TenantID  string
-	Username  string
-	Domain    string
-	Enabled   bool
-	CreatedAt string
+	ID         string
+	TenantID   string
+	Username   string
+	Domain     string
+	Enabled    bool
+	HasWebmail bool
+	CreatedAt  string
 }
 
 // CreateSMTPUser inserts an SMTP submission credential and returns its id. username must
 // be globally unique (Dovecot looks it up across all tenants); a duplicate returns an
-// error. passwordHash is a bcrypt hash. domain is optional ("" stores NULL).
-func (s *Store) CreateSMTPUser(ctx context.Context, tenantID, username, passwordHash, domain string) (string, error) {
-	const q = `INSERT INTO smtp_users (tenant_id, username, password_hash, domain)
-	           VALUES ($1, $2, $3, NULLIF($4, ''))
+// error. passwordHash is a bcrypt hash. domain is optional ("" stores NULL). passwordEnc is
+// the AES-256-GCM sealed copy of the same password used for webmail autologin; pass "" to
+// store NULL (no encryption key configured → no reversible password at rest, and webmail
+// autologin is unavailable for this user).
+func (s *Store) CreateSMTPUser(ctx context.Context, tenantID, username, passwordHash, domain, passwordEnc string) (string, error) {
+	const q = `INSERT INTO smtp_users (tenant_id, username, password_hash, domain, password_enc)
+	           VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''))
 	           RETURNING id`
 	var id string
-	if err := s.Pool.QueryRow(ctx, q, tenantID, username, passwordHash, domain).Scan(&id); err != nil {
+	if err := s.Pool.QueryRow(ctx, q, tenantID, username, passwordHash, domain, passwordEnc).Scan(&id); err != nil {
 		return "", fmt.Errorf("create smtp user: %w", err)
 	}
 	return id, nil
@@ -35,7 +42,8 @@ func (s *Store) CreateSMTPUser(ctx context.Context, tenantID, username, password
 
 // ListSMTPUsers returns a tenant's SMTP submission users (no password hashes).
 func (s *Store) ListSMTPUsers(ctx context.Context, tenantID string) ([]SMTPUser, error) {
-	const q = `SELECT id, tenant_id, username::text, COALESCE(domain, ''), enabled, created_at::text
+	const q = `SELECT id, tenant_id, username::text, COALESCE(domain, ''), enabled,
+	                  password_enc IS NOT NULL, created_at::text
 	           FROM smtp_users WHERE tenant_id = $1 ORDER BY username`
 	rows, err := s.Pool.Query(ctx, q, tenantID)
 	if err != nil {
@@ -46,7 +54,7 @@ func (s *Store) ListSMTPUsers(ctx context.Context, tenantID string) ([]SMTPUser,
 	var out []SMTPUser
 	for rows.Next() {
 		var u SMTPUser
-		if err := rows.Scan(&u.ID, &u.TenantID, &u.Username, &u.Domain, &u.Enabled, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.TenantID, &u.Username, &u.Domain, &u.Enabled, &u.HasWebmail, &u.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan smtp user: %w", err)
 		}
 		out = append(out, u)
@@ -67,10 +75,13 @@ func (s *Store) SetSMTPUserEnabled(ctx context.Context, tenantID, id string, ena
 }
 
 // UpdateSMTPUserPassword resets an SMTP user's password (bcrypt hash). Tenant-scoped.
-func (s *Store) UpdateSMTPUserPassword(ctx context.Context, tenantID, id, passwordHash string) (bool, error) {
-	const q = `UPDATE smtp_users SET password_hash = $3, updated_at = now()
+// passwordEnc is the sealed copy for webmail autologin; "" clears it (NULL), which is what
+// we want when no encryption key is configured — a stale ciphertext would otherwise unseal
+// to the OLD password and hand Roundcube a credential the relay no longer accepts.
+func (s *Store) UpdateSMTPUserPassword(ctx context.Context, tenantID, id, passwordHash, passwordEnc string) (bool, error) {
+	const q = `UPDATE smtp_users SET password_hash = $3, password_enc = NULLIF($4, ''), updated_at = now()
 	           WHERE id = $2 AND tenant_id = $1`
-	tag, err := s.Pool.Exec(ctx, q, tenantID, id, passwordHash)
+	tag, err := s.Pool.Exec(ctx, q, tenantID, id, passwordHash, passwordEnc)
 	if err != nil {
 		return false, fmt.Errorf("update smtp user password: %w", err)
 	}

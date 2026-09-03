@@ -30,10 +30,15 @@ any tenant DB row:
 `MXS_REDIS_DB`, `MXS_REDIS_PASSWORD`, `MXS_OBJECTSTORE_*` (endpoint/bucket/region/keys/ssl),
 `MXS_ENCRYPTION_KEY`, `MXS_RECIPIENT_HASH_KEY`, `MXS_TELEMETRY_HASHKEY`, `PG_*` (compose),
 `MXS_CONFIG`, `MXS_SERVICE`, `MXS_HTTPADDR`, `MXS_SMTP_ADDR`, `MXS_LOGLEVEL`,
-`MXS_PUBLIC_BASE_URL`, `MXS_API_BASE`, `MXS_API_TOKEN`.
+`MXS_PUBLIC_BASE_URL`, `MXS_API_BASE`, `MXS_API_TOKEN`,
+`MXS_WEBMAIL_BASEURL`, `MXS_WEBMAIL_PLUGINSECRET`, `MXS_WEBMAIL_IMAPHOST`,
+`MXS_WEBMAIL_IMAPPORT`, `MXS_WEBMAIL_IMAPTLS`, `MXS_WEBMAIL_TOKENTTL`.
 
 `MXS_ENCRYPTION_KEY` is the master key that seals every other secret stored in the DB — it
-can never itself live in the DB.
+can never itself live in the DB. It also gates webmail autologin: without it apid stores no
+sealed SMTP password and the feature reports itself unavailable rather than falling back to
+plaintext. `MXS_WEBMAIL_PLUGINSECRET` is the only credential guarding `/v1/webmail/redeem`,
+which sits outside the tenant auth pipeline — treat it like an API token.
 
 ---
 
@@ -48,6 +53,9 @@ these (read-only) but cannot safely change them:
   `RBL_HEALTHY_IPS_FILE` (drives the host-side `rbl-rotation-hook.sh`).
 - **Relay provisioning:** Postfix/Dovecot/rspamd/ClamAV/OpenDKIM setup, firewall, milters,
   submission SASL (`--wire-relay-sasl`, `--wire-relay-spam`), DKIM key generation.
+- **Webmail mailboxes:** `WEBMAIL`, `WEBMAIL_IMAP_LISTEN`, `WEBMAIL_DOMAINS`, `VMAIL_UID`,
+  `VMAIL_GID`, `VMAIL_HOME` (`--wire-webmail`; Dovecot IMAP + maildir store + optional LMTP
+  delivery). See `docs/webmail-autologin.md`.
 - **Auto-updater:** `deploy/self-update.sh` + the `mxsentinel-update.*` systemd units.
 
 The dashboard's role here is **observability**, which the platform already provides

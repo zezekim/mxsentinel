@@ -260,8 +260,9 @@ they are `null` until an incident has been analyzed.
 Marks an incident resolved → `{ "resolved": true }` (404 if not found for the tenant).
 
 ### `GET /v1/smtp-users` (admin)
-Lists the tenant's SMTP submission users → `{ "users": [ { "id","username","domain","enabled","created_at" } ] }`.
-Password hashes are never returned.
+Lists the tenant's SMTP submission users → `{ "users": [ { "id","username","domain","enabled","webmail_available","created_at" } ] }`.
+Password hashes are never returned. `webmail_available` reports whether one-click webmail can
+be opened for that user (see `docs/webmail-autologin.md`).
 
 ### `POST /v1/smtp-users` (admin)
 `{ "username", "password", "domain"? }` → **201** `{ "id","username","domain","enabled" }`.
@@ -274,6 +275,19 @@ account and/or resets its password. **404** if not found for the tenant.
 
 ### `DELETE /v1/smtp-users/{id}` (admin)
 Removes the credential → `{ "deleted": true }` (404 if not found for the tenant).
+
+### `POST /v1/smtp-users/{id}/webmail-session` (admin)
+Mints a single-use Roundcube autologin URL for the credential → **201**
+`{ "username","url","token","expires_at" }`. The token is valid for seconds and dies on first
+use. **409** `disabled` (user is disabled) / `no_webmail_credential` (no sealed password —
+reset the user's password); **503** `not_configured` when webmail is not set up. Full model in
+`docs/webmail-autologin.md`.
+
+### `POST /v1/webmail/redeem` (no tenant auth — `X-MXS-Webmail-Secret`)
+Called only by the Roundcube `mxs_autologin` plugin. `{ "token" }` → `{ "username","password",
+"imap_host","imap_port" }`, consuming the token. **401** for a bad secret, and **401**
+`invalid_token` for a token that is expired, already redeemed, unknown, or whose user has since
+been disabled — the cases are deliberately indistinguishable.
 
 ### `GET /v1/settings` (read)
 Returns the tenant's mail settings → `{ "settings": { "spf_include","dkim_selector",

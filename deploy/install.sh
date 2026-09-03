@@ -8,6 +8,7 @@
 #     sudo bash deploy/install.sh --wire-relay-spam  # (re-)install rspamd + ClamAV outbound filtering, then exit
 #     sudo bash deploy/install.sh --wire-ip-rotation # rotate outbound across a list of sending IPs, then exit
 #     sudo bash deploy/install.sh --wire-relay-failover # wire fallback-smarthost failover (mail.baby) for Outlook throttling, then exit
+#     sudo bash deploy/install.sh --wire-webmail     # give SMTP users IMAP mailboxes for dashboard webmail, then exit
 #     bash deploy/install.sh --restart               # restart the running stack, then exit
 #
 # It installs every dependency (Docker, optionally Ollama, optionally Postfix+OpenDKIM),
@@ -25,6 +26,7 @@ WIRE_RELAY_SASL=0
 WIRE_RELAY_SPAM=0
 WIRE_IP_ROTATION=0
 WIRE_RELAY_FAILOVER=0
+WIRE_WEBMAIL=0
 RESTART_ONLY=0
 for arg in "$@"; do
 	case "$arg" in
@@ -33,6 +35,7 @@ for arg in "$@"; do
 		--wire-relay-spam) WIRE_RELAY_SPAM=1 ;;
 		--wire-ip-rotation) WIRE_IP_ROTATION=1 ;;
 		--wire-relay-failover) WIRE_RELAY_FAILOVER=1 ;;
+		--wire-webmail) WIRE_WEBMAIL=1 ;;
 		--restart) RESTART_ONLY=1 ;;
 		-h|--help) sed -n '2,20p' "$0"; exit 0 ;;
 		*) echo "unknown flag: $arg" >&2; exit 2 ;;
@@ -47,6 +50,15 @@ BASE="deploy/docker-compose.yml"
 PROD="deploy/docker-compose.prod.yml"
 ENV_FILE="deploy/.env"
 DKIM_SELECTOR="mxs"
+
+# Webmail (Roundcube autologin, docs/webmail-autologin.md). Off unless WEBMAIL=1 is set in
+# deploy/.env or --wire-webmail is used. The mail store is owned by an unprivileged vmail
+# account; the IMAP listener is bound to loopback + the Docker bridge only, since its only
+# client is the Roundcube container on this host.
+VMAIL_UID="${VMAIL_UID:-5000}"
+VMAIL_GID="${VMAIL_GID:-5000}"
+VMAIL_HOME="${VMAIL_HOME:-/var/mail/vhosts}"
+WEBMAIL_IMAP_LISTEN="${WEBMAIL_IMAP_LISTEN:-127.0.0.1,172.17.0.1}"
 
 # ---- output + prompt helpers ----------------------------------------------
 bold() { printf '\n\033[1m%s\033[0m\n' "$*"; }
@@ -273,17 +285,33 @@ EOF
 }
 
 provision_dovecot() {
-	# Dovecot acts purely as Postfix's SASL provider (no IMAP/POP). It authenticates SMTP
-	# submission clients against the smtp_users table in Postgres, so credentials created
-	# in the dashboard (SMTP Users) or via `mxctl smtp-user create` work immediately.
-	bold "Installing Dovecot (SASL passdb for SMTP submission users)…"
-	apt_install dovecot-core dovecot-pgsql
+	# Dovecot is Postfix's SASL provider: it authenticates SMTP submission clients against
+	# the smtp_users table in Postgres, so credentials created in the dashboard (SMTP Users)
+	# or via `mxctl smtp-user create` work immediately.
+	#
+	# With WEBMAIL=1 it ALSO serves IMAP, giving those same users a real mailbox that
+	# Roundcube can be logged into from the dashboard (docs/webmail-autologin.md). Without
+	# it, this stays SASL-only — no IMAP, no POP, no mail storage — exactly as before.
+	local webmail="${WEBMAIL:-0}"
+	local protocols="" userdb_args="uid=nobody gid=nogroup home=/nonexistent allow_all_users=yes"
+
+	if [ "$webmail" -eq 1 ]; then
+		bold "Installing Dovecot (SASL passdb + IMAP mailboxes for SMTP submission users)…"
+		apt_install dovecot-core dovecot-pgsql dovecot-imapd dovecot-lmtpd
+		protocols="imap lmtp"
+		userdb_args="uid=$VMAIL_UID gid=$VMAIL_GID home=$VMAIL_HOME/%u allow_all_users=yes"
+		provision_vmail_store
+	else
+		bold "Installing Dovecot (SASL passdb for SMTP submission users)…"
+		apt_install dovecot-core dovecot-pgsql
+	fi
 
 	cp -n /etc/dovecot/dovecot.conf "/etc/dovecot/dovecot.conf.bak.$(date +%s)" 2>/dev/null || true
-	cat > /etc/dovecot/dovecot.conf <<'EOF'
-# Managed by mxsentinel deploy/install.sh — SMTP submission SASL only (no IMAP/POP).
+	cat > /etc/dovecot/dovecot.conf <<EOF
+# Managed by mxsentinel deploy/install.sh — do not edit by hand.
 # Postfix uses this as its SASL backend; passwords live in Postgres (smtp_users).
-protocols =
+# protocols is empty for a SASL-only relay, or "imap lmtp" when webmail is enabled.
+protocols = $protocols
 auth_mechanisms = plain login
 disable_plaintext_auth = no
 log_path = /var/log/dovecot.log
@@ -294,7 +322,7 @@ passdb {
 }
 userdb {
   driver = static
-  args = uid=nobody gid=nogroup home=/nonexistent allow_all_users=yes
+  args = $userdb_args
 }
 
 # Auth socket Postfix reads (smtpd_sasl_type=dovecot, smtpd_sasl_path=private/auth).
@@ -306,6 +334,50 @@ service auth {
   }
 }
 EOF
+
+	if [ "$webmail" -eq 1 ]; then
+		# Maildir per login. %u is the whole SASL login (usually user@domain), so one
+		# directory per credential and no ambiguity for logins without a domain part.
+		#
+		# The IMAP listener is deliberately NOT public: it binds only to loopback and the
+		# Docker bridge, because its only client is the Roundcube container on this host.
+		# Everything reaching it is inside the box; the firewall never opens 143.
+		cat >> /etc/dovecot/dovecot.conf <<EOF
+
+# ---- webmail (IMAP) -------------------------------------------------------
+mail_location = maildir:$VMAIL_HOME/%u/Maildir
+mail_uid = $VMAIL_UID
+mail_gid = $VMAIL_GID
+# Create the maildir on first login so a brand-new SMTP user can open webmail immediately.
+mail_home = $VMAIL_HOME/%u
+namespace inbox {
+  inbox = yes
+}
+service imap-login {
+  inet_listener imap {
+    address = $WEBMAIL_IMAP_LISTEN
+    port = 143
+  }
+  # No implicit-TLS listener: nothing off-host may talk to this Dovecot.
+  inet_listener imaps {
+    port = 0
+  }
+}
+# LMTP socket for local delivery. It exists as soon as webmail is on, but Postfix only
+# uses it for domains explicitly listed in WEBMAIL_DOMAINS (see below) — a relay must not
+# start swallowing mail for domains it is supposed to forward.
+service lmtp {
+  unix_listener /var/spool/postfix/private/dovecot-lmtp {
+    mode = 0600
+    user = postfix
+    group = postfix
+  }
+}
+protocol lmtp {
+  postmaster_address = postmaster@${MAIL_DOMAIN:-localhost}
+}
+EOF
+	fi
 
 	# Postgres-backed password lookup. The relay connects to the Postgres container
 	# published on 127.0.0.1:5432 (see deploy/docker-compose.yml). default_pass_scheme
@@ -334,9 +406,60 @@ EOF
 		"submission/inet/smtpd_client_restrictions=permit_sasl_authenticated,reject" \
 		"submission/inet/smtpd_relay_restrictions=permit_sasl_authenticated,reject" \
 		"submission/inet/smtpd_recipient_restrictions=permit_sasl_authenticated,reject"
+
+	[ "$webmail" -eq 1 ] && provision_webmail_delivery
+
 	systemctl restart postfix
 	info "Dovecot SASL configured; Postfix submission (587) authenticates SMTP users from Postgres"
+	if [ "$webmail" -eq 1 ]; then
+		info "Dovecot IMAP listening on $WEBMAIL_IMAP_LISTEN:143 (host-local) — mailboxes under $VMAIL_HOME"
+	fi
 	info "Submission uses the default (snakeoil) TLS cert — install a real cert for production (see docs/smarthost.md)"
+}
+
+# Creates the unprivileged mail owner and the maildir root. Idempotent.
+provision_vmail_store() {
+	if ! getent group vmail >/dev/null 2>&1; then
+		groupadd -g "$VMAIL_GID" vmail
+	fi
+	if ! getent passwd vmail >/dev/null 2>&1; then
+		useradd -r -u "$VMAIL_UID" -g vmail -d "$VMAIL_HOME" -s /usr/sbin/nologin vmail
+	fi
+	# Re-read the real ids in case the account already existed with different ones.
+	VMAIL_UID="$(id -u vmail)"
+	VMAIL_GID="$(id -g vmail)"
+	mkdir -p "$VMAIL_HOME"
+	chown "$VMAIL_UID:$VMAIL_GID" "$VMAIL_HOME"
+	chmod 770 "$VMAIL_HOME"
+}
+
+# Inbound delivery into the webmail mailboxes. Opt-in and per-domain, because this is the
+# one setting that can break a relay: making Postfix authoritative for a domain it is
+# supposed to FORWARD would silently swallow that domain's mail. With WEBMAIL_DOMAINS empty
+# (the default) nothing about mail routing changes — the mailboxes exist and are readable in
+# webmail, they simply receive nothing until you opt a domain in.
+provision_webmail_delivery() {
+	if [ -z "${WEBMAIL_DOMAINS:-}" ]; then
+		info "webmail: no WEBMAIL_DOMAINS set — mail routing unchanged (mailboxes stay empty until you opt a domain in)"
+		return 0
+	fi
+	warn "webmail: making this host authoritative for: $WEBMAIL_DOMAINS"
+	warn "         mail for these domains will be DELIVERED HERE, not relayed onward — make sure that is what you want"
+	postconf -e \
+		"virtual_mailbox_domains = ${WEBMAIL_DOMAINS//,/ }" \
+		"virtual_transport = lmtp:unix:private/dovecot-lmtp" \
+		"virtual_mailbox_maps = proxy:pgsql:/etc/postfix/pgsql-virtual-mailbox-maps.cf"
+	cat > /etc/postfix/pgsql-virtual-mailbox-maps.cf <<EOF
+hosts = 127.0.0.1:5432
+dbname = ${PG_DB:-mxsentinel}
+user = ${PG_USER:-mxsentinel}
+password = ${PG_PASSWORD:-}
+query = SELECT 1 FROM smtp_users WHERE username = '%s' AND enabled = TRUE
+EOF
+	chmod 640 /etc/postfix/pgsql-virtual-mailbox-maps.cf
+	chgrp postfix /etc/postfix/pgsql-virtual-mailbox-maps.cf 2>/dev/null || true
+	apt_install postfix-pgsql
+	info "webmail: inbound delivery wired for $WEBMAIL_DOMAINS via Dovecot LMTP"
 }
 
 provision_spam() {
@@ -632,6 +755,27 @@ if [ "$WIRE_RELAY_SASL" -eq 1 ]; then
 	bold "Done ✓ — relay SASL wired"
 	info "Submission endpoint: ${MXS_DOMAIN:-this host}:587 (STARTTLS, AUTH PLAIN/LOGIN)"
 	info "Manage users in the dashboard (SMTP Users) or: mxctl smtp-user create … (see docs/smarthost.md)"
+	exit 0
+fi
+
+# Focused maintenance path: turn on webmail for SMTP users on an already-provisioned relay,
+# then exit. Adds IMAP + a maildir store to the existing Dovecot; SASL keeps working exactly
+# as before. Idempotent. Mail routing is left alone unless WEBMAIL_DOMAINS is set.
+if [ "$WIRE_WEBMAIL" -eq 1 ]; then
+	[ "$(id -u)" -eq 0 ] || die "--wire-webmail needs root — run: sudo bash deploy/install.sh --wire-webmail"
+	is_debian || die "--wire-webmail supports Debian/Ubuntu (it installs Dovecot IMAP via apt)"
+	have postconf || die "Postfix not found on this host — provision the relay first (full install)"
+	[ -f "$ENV_FILE" ] || die "$ENV_FILE not found — it holds the Postgres credentials Dovecot connects with"
+	set -a
+	# shellcheck source=/dev/null
+	. "$ENV_FILE"
+	set +a
+	WEBMAIL=1
+	provision_dovecot
+	bold "Done ✓ — webmail mailboxes wired"
+	info "IMAP: $WEBMAIL_IMAP_LISTEN:143 (host-local) — point MXS_WEBMAIL_IMAPHOST at the address Roundcube can reach"
+	info "Next: set MXS_WEBMAIL_BASEURL + MXS_WEBMAIL_PLUGINSECRET in $ENV_FILE, install the Roundcube plugin,"
+	info "      then reset each SMTP user's password so its webmail credential is sealed (docs/webmail-autologin.md)"
 	exit 0
 fi
 

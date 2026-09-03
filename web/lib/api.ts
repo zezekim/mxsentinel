@@ -560,6 +560,8 @@ export interface SMTPUser {
   username: string;
   domain: string;
   enabled: boolean;
+  /** True when this user can be opened in webmail with one click (see docs/webmail-autologin.md). */
+  webmail_available: boolean;
   created_at: string;
 }
 
@@ -591,6 +593,19 @@ export function resetSMTPUserPassword(id: string, password: string): Promise<{ o
 
 export function deleteSMTPUser(id: string): Promise<{ deleted: boolean }> {
   return apiDelete<{ deleted: boolean }>(`/v1/smtp-users/${id}`);
+}
+
+export interface WebmailSession {
+  username: string;
+  /** Single-use Roundcube autologin URL. Valid for seconds — open it immediately. */
+  url: string;
+  token: string;
+  expires_at: string;
+}
+
+/** Mints a one-shot webmail autologin URL for an SMTP user (admin scope). */
+export function createWebmailSession(id: string): Promise<WebmailSession> {
+  return apiPost<WebmailSession>(`/v1/smtp-users/${id}/webmail-session`, {});
 }
 
 // ─── Mail settings ──────────────────────────────────────────────────────────

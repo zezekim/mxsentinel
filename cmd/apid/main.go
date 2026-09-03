@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -100,6 +101,27 @@ func run(addr, corsOrigin string, rateLimit int) error {
 	}
 	apiSrv = apiSrv.WithEncryptor(enc)
 
+	// Roundcube autologin for SMTP users (docs/webmail-autologin.md). Disabled unless both
+	// the public Roundcube URL and the plugin shared secret are configured; the sealed
+	// password copy it hands out additionally requires MXS_ENCRYPTION_KEY.
+	if cfg.Webmail.BaseURL != "" && cfg.Webmail.PluginSecret != "" {
+		apiSrv = apiSrv.WithWebmail(api.WebmailOptions{
+			BaseURL:      cfg.Webmail.BaseURL,
+			PluginSecret: cfg.Webmail.PluginSecret,
+			IMAPHost:     cfg.Webmail.IMAPHost,
+			IMAPPort:     cfg.Webmail.IMAPPort,
+			IMAPTLS:      cfg.Webmail.IMAPTLS,
+			TokenTTL:     time.Duration(cfg.Webmail.TokenTTLSecs) * time.Second,
+		})
+		if !encrypted {
+			log.Warn("webmail autologin configured but MXS_ENCRYPTION_KEY is unset — no sealed passwords are stored, so autologin will be unavailable for every SMTP user")
+		}
+		log.Info("webmail autologin enabled", "base_url", cfg.Webmail.BaseURL, "imap_host", cfg.Webmail.IMAPHost)
+		go purgeWebmailTokens(ctx, pg, log)
+	} else if cfg.Webmail.BaseURL != "" || cfg.Webmail.PluginSecret != "" {
+		log.Warn("webmail autologin half-configured — set BOTH MXS_WEBMAIL_BASEURL and MXS_WEBMAIL_PLUGINSECRET; feature stays disabled")
+	}
+
 	// Overlay the dashboard-managed NL-analytics tool cap (Settings → Delivery & data tuning)
 	// over MXS_NLQUERY_MAX_TOOLS; the dashboard value wins when set. Resolved once at startup
 	// (restart to pick up a change). A read error is logged and treated as "not set".
@@ -140,4 +162,31 @@ func run(addr, corsOrigin string, rateLimit int) error {
 	sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return httpSrv.Shutdown(sctx)
+}
+
+// purgeWebmailTokens sweeps spent and expired autologin tokens hourly. They are one-shot
+// and live for seconds, but every click on the dashboard's Webmail button leaves a row —
+// keep a day of them for after-the-fact investigation, then drop them.
+func purgeWebmailTokens(ctx context.Context, pg *pgstore.Store, log *slog.Logger) {
+	const (
+		every  = time.Hour
+		retain = 24 * time.Hour
+	)
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			n, err := pg.PurgeWebmailTokens(ctx, retain)
+			if err != nil {
+				log.Warn("purge webmail tokens", "err", err)
+				continue
+			}
+			if n > 0 {
+				log.Info("purged expired webmail tokens", "rows", n)
+			}
+		}
+	}
 }

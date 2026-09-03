@@ -18,6 +18,7 @@ import (
 	"github.com/zezekim/mxsentinel/internal/api"
 	"github.com/zezekim/mxsentinel/internal/auth"
 	"github.com/zezekim/mxsentinel/internal/config"
+	"github.com/zezekim/mxsentinel/internal/crypto"
 	"github.com/zezekim/mxsentinel/internal/events"
 	"github.com/zezekim/mxsentinel/internal/obs"
 	chstore "github.com/zezekim/mxsentinel/internal/store/clickhouse"
@@ -329,7 +330,25 @@ func smtpUserCmd(load func() (config.Config, error)) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			id, err := pg.CreateSMTPUser(ctx, tenant.ID, username, hash, domain)
+			// Seal a reversible copy for Roundcube autologin, exactly as apid does. With no
+			// MXS_ENCRYPTION_KEY the Encryptor is a passthrough, so we store nothing rather
+			// than write the password to Postgres in the clear — webmail then stays
+			// unavailable for this user. See docs/webmail-autologin.md.
+			cfg, err := load()
+			if err != nil {
+				return err
+			}
+			enc, encrypted, err := crypto.NewEncryptor(cfg.Integration.EncryptionKey)
+			if err != nil {
+				return err
+			}
+			var sealed string
+			if encrypted {
+				if sealed, err = enc.Seal(password); err != nil {
+					return err
+				}
+			}
+			id, err := pg.CreateSMTPUser(ctx, tenant.ID, username, hash, domain, sealed)
 			if err != nil {
 				return err
 			}

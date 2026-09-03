@@ -29,6 +29,7 @@ type Server struct {
 	publicBaseURL string            // e.g. https://sentinel.squidix.net; "" → return relative /trace paths
 	nlMaxTools    int               // dashboard override for nlquery MaxTools; 0 = use env/default
 	loginAlerts   loginDispatcher   // lazily-built fan-out for sign-in notifications
+	webmail       WebmailOptions    // Roundcube autologin; zero value = feature disabled
 }
 
 // New constructs the API server. corsOrigin is the Access-Control-Allow-Origin value
@@ -91,6 +92,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/smtp-users", s.requireScope(ScopeAdmin, s.handleCreateSMTPUser))
 	mux.HandleFunc("PATCH /v1/smtp-users/{id}", s.requireScope(ScopeAdmin, s.handleUpdateSMTPUser))
 	mux.HandleFunc("DELETE /v1/smtp-users/{id}", s.requireScope(ScopeAdmin, s.handleDeleteSMTPUser))
+	// One-shot Roundcube autologin URL for an SMTP user (see docs/webmail-autologin.md).
+	mux.HandleFunc("POST /v1/smtp-users/{id}/webmail-session", s.requireScope(ScopeAdmin, s.handleCreateWebmailSession))
 	mux.HandleFunc("GET /v1/settings", s.requireScope(ScopeRead, s.handleGetSettings))
 	mux.HandleFunc("PUT /v1/settings", s.requireScope(ScopeAdmin, s.handleUpdateSettings))
 	mux.HandleFunc("GET /v1/settings/smarthost", s.requireScope(ScopeRead, s.handleGetSmarthost))
@@ -175,6 +178,9 @@ func (s *Server) Handler() http.Handler {
 	root.HandleFunc("POST /v1/auth/login", s.handleLogin)
 	root.HandleFunc("GET /v1/status/{slug}", s.handlePublicStatus)
 	root.HandleFunc("GET /v1/trace/{token}", s.handlePublicTrace)
+	// Redeemed by the Roundcube mxs_autologin plugin, which holds no tenant API token — it
+	// authenticates with the X-MXS-Webmail-Secret shared secret instead.
+	root.HandleFunc("POST /v1/webmail/redeem", s.handleRedeemWebmailToken)
 	root.Handle("/", authed)
 
 	// recoverer → logger → cors (handles preflight) → (login | authed routes)
@@ -193,6 +199,13 @@ func (s *Server) WithEncryptor(enc *crypto.Encryptor) *Server {
 // relative "/trace/<token>" path and the caller composes its own origin.
 func (s *Server) WithPublicBaseURL(base string) *Server {
 	s.publicBaseURL = strings.TrimRight(base, "/")
+	return s
+}
+
+// WithWebmail wires the Roundcube autologin handoff. Autologin stays disabled unless the
+// options carry both a base URL and a plugin secret; see docs/webmail-autologin.md.
+func (s *Server) WithWebmail(opts WebmailOptions) *Server {
+	s.webmail = opts
 	return s
 }
 

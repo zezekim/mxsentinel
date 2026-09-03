@@ -7,6 +7,7 @@ import {
   setSMTPUserEnabled,
   resetSMTPUserPassword,
   deleteSMTPUser,
+  createWebmailSession,
   type SMTPUser,
 } from "@/lib/api";
 import LoadingError from "@/components/LoadingError";
@@ -45,6 +46,7 @@ export default function SMTPUsersPage() {
   const [password, setPassword] = useState("");
   const [domain, setDomain] = useState("");
   const [creating, setCreating] = useState(false);
+  const [openingWebmail, setOpeningWebmail] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [created, setCreated] = useState<{ username: string; password: string } | null>(null);
@@ -111,8 +113,38 @@ export default function SMTPUsersPage() {
     try {
       await resetSMTPUserPassword(u.id, pw);
       setNotice(`Password updated for "${u.username}". Update the smarthost config with the new password.`);
+      // The reset is what (re)seals the copy webmail autologin needs, so the row's
+      // webmail_available may have just flipped.
+      refresh();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  // Opens Roundcube already logged in as this SMTP user. The tab is opened synchronously —
+  // before awaiting the API — because a window.open() after an await is treated as a popup
+  // by the browser and blocked. That rules out the "noopener" feature (it makes window.open
+  // return null, leaving nothing to navigate), so the link is severed by clearing opener on
+  // the still-blank tab instead. The URL carries a single-use token valid for seconds, so it
+  // is navigated to immediately and never stored.
+  async function handleWebmail(u: SMTPUser) {
+    const tab = window.open("", "_blank");
+    setOpeningWebmail(u.id);
+    setError(null);
+    try {
+      const session = await createWebmailSession(u.id);
+      if (tab) {
+        tab.opener = null;
+        tab.location.replace(session.url);
+      } else {
+        // Popup blocked despite the synchronous open — fall back to this tab.
+        window.location.assign(session.url);
+      }
+    } catch (err: unknown) {
+      tab?.close();
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setOpeningWebmail(null);
     }
   }
 
@@ -134,7 +166,9 @@ export default function SMTPUsersPage() {
       <p className="section-desc">
         Credentials that smarthost clients (cPanel, Exim, applications) use to authenticate to the
         relay&apos;s submission port (587, STARTTLS, AUTH PLAIN/LOGIN). See the smarthost guide for client
-        configuration examples.
+        configuration examples. When webmail is configured, <strong>Webmail</strong> opens Roundcube
+        signed in as that user; the button appears once the credential has been created or had its
+        password reset since webmail was enabled.
       </p>
 
       <form className="filters" onSubmit={handleCreate}>
@@ -180,8 +214,8 @@ export default function SMTPUsersPage() {
       {notice && <p className="notice-banner">{notice}</p>}
       {created && (
         <div className="notice-banner cred-created">
-          <strong>Created {created.username}.</strong> Copy this password now — it is stored
-          only as a hash and won&apos;t be shown again.
+          <strong>Created {created.username}.</strong> Copy this password now — it won&apos;t be
+          shown again.
           <div className="cred-reveal">
             <code>{created.password}</code>
             <button type="button" className="btn-sm" onClick={() => copyToClipboard(created.password)}>
@@ -225,6 +259,21 @@ export default function SMTPUsersPage() {
                       <td style={{ whiteSpace: "nowrap" }}>{fmt(u.created_at)}</td>
                       <td>
                         <div className="row-actions">
+                          {u.webmail_available && (
+                            <button
+                              type="button"
+                              className="btn-sm"
+                              disabled={!u.enabled || openingWebmail === u.id}
+                              onClick={() => handleWebmail(u)}
+                              title={
+                                u.enabled
+                                  ? "Open Roundcube signed in as this user"
+                                  : "Enable the user to open webmail"
+                              }
+                            >
+                              {openingWebmail === u.id ? "Opening…" : "Webmail"}
+                            </button>
+                          )}
                           <button type="button" className="btn-sm" onClick={() => handleToggle(u)}>
                             {u.enabled ? "Disable" : "Enable"}
                           </button>
